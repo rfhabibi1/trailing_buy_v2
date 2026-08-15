@@ -50,10 +50,6 @@ desktop.ini
 .coverage
 htmlcov/
 
-# State directory - JANGAN IGNORE!
-# HAPUS BARIS INI:
-# state/
-
-# Sebaliknya, TAMBAHKAN ini untuk menjaga folder:
+# State directory - keep folder structure but ignore generated files
 state/
 !.gitkeep
