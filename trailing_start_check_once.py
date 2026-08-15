@@ -7,11 +7,6 @@ ARSITEKTUR HYBRID:
     - TIMING: Data INTRADAY (15m/30m/60m) untuk menangkap momen breakout
     - KONFIRMASI: Data HARIAN untuk MTF, ATR, OBV
 
-MULTI-TICKER SUPPORT:
-    - Monitor 3-5 saham sekaligus (atau lebih)
-    - Format TICKERS: "TINS.JK,ANTM.JK,TLKM.JK"
-    - Masing-masing saham punya state sendiri
-
 VOLUME FILTERS (ADVANCED):
     1. Volume Ratio      - Volume per-bar vs rata-rata (basic)
     2. Volume Spike      - Deteksi lonjakan volume dengan Z-Score
@@ -21,7 +16,7 @@ VOLUME FILTERS (ADVANCED):
     6. MT Volume         - Konfirmasi volume harian juga meningkat
     7. Volume-Price Corr - Korelasi volume & harga (breakout strength)
 
-FILTER KONFIRMASI (tetap):
+FILTER KONFIRMASI:
     1. Close Confirmation - Breakout di Close, bukan High
     2. MTF Filter         - Tren mingguan mendukung
     3. ATR Threshold      - Ambang dinamis dari volatilitas
@@ -37,6 +32,7 @@ import json
 import os
 import sys
 import logging
+import time
 from datetime import datetime
 from typing import Dict, Any, Optional, Tuple, List
 
@@ -92,10 +88,8 @@ def parse_tickers(tickers_str: str) -> List[str]:
     if not tickers_str or tickers_str == "":
         return ["TINS.JK"]
     
-    # Split by comma, trim whitespace, filter empty
     tickers = [t.strip().upper() for t in tickers_str.split(",") if t.strip()]
     
-    # Jika hanya 1 ticker tanpa koma, return sebagai list
     if not tickers:
         return ["TINS.JK"]
     
@@ -109,11 +103,10 @@ def parse_tickers(tickers_str: str) -> List[str]:
 # --- MULTI-TICKER ---
 TICKERS_RAW = safe_str(os.environ.get("TICKERS"), "TINS.JK")
 TICKERS = parse_tickers(TICKERS_RAW)
-MAX_TICKERS = safe_int(os.environ.get("MAX_TICKERS"), 10)  # Batas maksimal
+MAX_TICKERS = safe_int(os.environ.get("MAX_TICKERS"), 10)
 
-# Batasi jumlah ticker
 if len(TICKERS) > MAX_TICKERS:
-    logger.warning(f"Terlalu banyak ticker ({len(TICKERS)}), dibatasi menjadi {MAX_TICKERS}")
+    logging.warning(f"Terlalu banyak ticker ({len(TICKERS)}), dibatasi menjadi {MAX_TICKERS}")
     TICKERS = TICKERS[:MAX_TICKERS]
 
 # --- DATA INTRADAY (TIMING) ---
@@ -123,17 +116,17 @@ INTRADAY_LOOKBACK_BARS = safe_int(os.environ.get("INTRADAY_LOOKBACK_BARS"), 20)
 BREAKOUT_PERCENT = safe_float(os.environ.get("BREAKOUT_PERCENT"), 5.0)
 USE_INTRADAY_LOW = safe_bool(os.environ.get("USE_INTRADAY_LOW"), True)
 
-# --- FILTER 1: VOLUME RATIO (Basic) ---
+# --- FILTER 1: VOLUME RATIO ---
 ENABLE_VOLUME_FILTER = safe_bool(os.environ.get("ENABLE_VOLUME_FILTER"), True)
 VOLUME_LOOKBACK_BARS = safe_int(os.environ.get("VOLUME_LOOKBACK_BARS"), 20)
 VOLUME_MULTIPLIER = safe_float(os.environ.get("VOLUME_MULTIPLIER"), 1.5)
 
-# --- FILTER 2: VOLUME SPIKE (Z-Score) ---
+# --- FILTER 2: VOLUME SPIKE ---
 ENABLE_VOLUME_SPIKE = safe_bool(os.environ.get("ENABLE_VOLUME_SPIKE"), True)
 VOLUME_SPIKE_THRESHOLD = safe_float(os.environ.get("VOLUME_SPIKE_THRESHOLD"), 2.0)
 VOLUME_SPIKE_LOOKBACK = safe_int(os.environ.get("VOLUME_SPIKE_LOOKBACK"), 20)
 
-# --- FILTER 3: VOLUME TREND (Slope) ---
+# --- FILTER 3: VOLUME TREND ---
 ENABLE_VOLUME_TREND = safe_bool(os.environ.get("ENABLE_VOLUME_TREND"), True)
 VOLUME_TREND_BARS = safe_int(os.environ.get("VOLUME_TREND_BARS"), 10)
 
@@ -141,12 +134,12 @@ VOLUME_TREND_BARS = safe_int(os.environ.get("VOLUME_TREND_BARS"), 10)
 ENABLE_VWAP_FILTER = safe_bool(os.environ.get("ENABLE_VWAP_FILTER"), True)
 VWAP_LOOKBACK_BARS = safe_int(os.environ.get("VWAP_LOOKBACK_BARS"), 20)
 
-# --- FILTER 5: CVD (Cumulative Volume Delta) ---
+# --- FILTER 5: CVD ---
 ENABLE_CVD_FILTER = safe_bool(os.environ.get("ENABLE_CVD_FILTER"), True)
 CVD_LOOKBACK_BARS = safe_int(os.environ.get("CVD_LOOKBACK_BARS"), 10)
 CVD_BUY_THRESHOLD = safe_float(os.environ.get("CVD_BUY_THRESHOLD"), 0.55)
 
-# --- FILTER 6: MULTI-TIMEFRAME VOLUME ---
+# --- FILTER 6: MT VOLUME ---
 ENABLE_MT_VOLUME = safe_bool(os.environ.get("ENABLE_MT_VOLUME"), True)
 MT_VOLUME_DAILY_LOOKBACK = safe_int(os.environ.get("MT_VOLUME_DAILY_LOOKBACK"), 20)
 MT_VOLUME_DAILY_MULTIPLIER = safe_float(os.environ.get("MT_VOLUME_DAILY_MULTIPLIER"), 1.2)
@@ -158,16 +151,16 @@ VOLUME_PRICE_CORR_BARS = safe_int(os.environ.get("VOLUME_PRICE_CORR_BARS"), 10)
 # --- CLOSE CONFIRMATION ---
 ENABLE_CLOSE_CONFIRMATION = safe_bool(os.environ.get("ENABLE_CLOSE_CONFIRMATION"), True)
 
-# --- MTF FILTER (Daily) ---
+# --- MTF FILTER ---
 ENABLE_MTF_FILTER = safe_bool(os.environ.get("ENABLE_MTF_FILTER"), True)
 MTF_SMA_WEEKS = safe_int(os.environ.get("MTF_SMA_WEEKS"), 10)
 
-# --- ATR THRESHOLD (Daily) ---
+# --- ATR THRESHOLD ---
 ENABLE_ATR_THRESHOLD = safe_bool(os.environ.get("ENABLE_ATR_THRESHOLD"), False)
 ATR_PERIOD = safe_int(os.environ.get("ATR_PERIOD"), 14)
 ATR_MULTIPLIER = safe_float(os.environ.get("ATR_MULTIPLIER"), 1.5)
 
-# --- OBV FILTER (Daily) ---
+# --- OBV FILTER ---
 ENABLE_OBV_FILTER = safe_bool(os.environ.get("ENABLE_OBV_FILTER"), True)
 OBV_SMA_PERIOD = safe_int(os.environ.get("OBV_SMA_PERIOD"), 20)
 
@@ -178,7 +171,7 @@ MAX_ZERO_VOLUME_BAR_RATIO = safe_float(os.environ.get("MAX_ZERO_VOLUME_BAR_RATIO
 MIN_AVG_DAILY_VALUE_RP = safe_float(os.environ.get("MIN_AVG_DAILY_VALUE_RP"), 1000000000)
 LIQUIDITY_LOOKBACK_DAYS = safe_int(os.environ.get("LIQUIDITY_LOOKBACK_DAYS"), 20)
 
-# --- BREAKOUT STRENGTH SCORE ---
+# --- STRENGTH SCORE ---
 ENABLE_STRENGTH_SCORE = safe_bool(os.environ.get("ENABLE_STRENGTH_SCORE"), True)
 STRONG_SCORE_THRESHOLD = safe_int(os.environ.get("STRONG_SCORE_THRESHOLD"), 80)
 MODERATE_SCORE_THRESHOLD = safe_int(os.environ.get("MODERATE_SCORE_THRESHOLD"), 60)
@@ -191,11 +184,11 @@ TELEGRAM_CHAT_ID = safe_str(os.environ.get("TELEGRAM_CHAT_ID"), "")
 STATE_DIR = "state"
 STATE_FILE_PREFIX = "trailing_start_state"
 
-# --- DATA HARIAN (untuk konfirmasi) ---
+# --- DAILY PERIOD ---
 DAILY_PERIOD_DAYS = safe_int(os.environ.get("DAILY_PERIOD_DAYS"), 200)
 
-# --- BATCH PROCESSING ---
-BATCH_DELAY_SECONDS = safe_int(os.environ.get("BATCH_DELAY_SECONDS"), 2)  # Delay antar saham
+# --- BATCH ---
+BATCH_DELAY_SECONDS = safe_int(os.environ.get("BATCH_DELAY_SECONDS"), 2)
 
 
 # =====================================================================
@@ -215,7 +208,6 @@ logger = logging.getLogger(__name__)
 
 def get_state_file(ticker: str) -> str:
     """Dapatkan path state file untuk ticker tertentu."""
-    # Sanitasi ticker untuk nama file (ganti . dengan _)
     safe_ticker = ticker.replace(".", "_")
     return os.path.join(STATE_DIR, f"{STATE_FILE_PREFIX}_{safe_ticker}.json")
 
@@ -290,17 +282,13 @@ def get_daily_data(ticker: str) -> Optional[pd.DataFrame]:
 # =====================================================================
 
 def check_liquidity(ticker: str, intraday_df: pd.DataFrame, daily_df: pd.DataFrame) -> Tuple[bool, Dict]:
-    """
-    Cek likuiditas saham sebelum analisis lebih lanjut.
-    Returns: (is_liquid, details)
-    """
+    """Cek likuiditas saham sebelum analisis lebih lanjut."""
     if not ENABLE_LIQUIDITY_CHECK:
         return True, {"enabled": False}
 
     details = {"enabled": True}
     is_liquid = True
 
-    # 1. Cek jumlah bar intraday
     n_bars = len(intraday_df)
     if n_bars < MIN_INTRADAY_BARS:
         is_liquid = False
@@ -308,7 +296,6 @@ def check_liquidity(ticker: str, intraday_df: pd.DataFrame, daily_df: pd.DataFra
     else:
         details["bar_check"] = f"✅ {n_bars} bar"
 
-    # 2. Cek proporsi volume = 0
     zero_volume_ratio = (intraday_df["Volume"] == 0).sum() / len(intraday_df)
     if zero_volume_ratio > MAX_ZERO_VOLUME_BAR_RATIO:
         is_liquid = False
@@ -316,7 +303,6 @@ def check_liquidity(ticker: str, intraday_df: pd.DataFrame, daily_df: pd.DataFra
     else:
         details["zero_volume"] = f"✅ {zero_volume_ratio*100:.1f}% bar volume 0"
 
-    # 3. Cek rata-rata nilai transaksi harian
     if len(daily_df) >= LIQUIDITY_LOOKBACK_DAYS:
         avg_value = (daily_df["Close"].tail(LIQUIDITY_LOOKBACK_DAYS) * 
                      daily_df["Volume"].tail(LIQUIDITY_LOOKBACK_DAYS)).mean()
@@ -547,9 +533,7 @@ def check_obv_accumulation(daily_df: pd.DataFrame, sma_period: int) -> Dict:
 # =====================================================================
 
 def detect_breakout(ticker: str, intraday_df: pd.DataFrame, daily_df: pd.DataFrame) -> Dict:
-    """
-    Gabungkan TIMING (intraday) dan semua KONFIRMASI.
-    """
+    """Gabungkan TIMING (intraday) dan semua KONFIRMASI."""
     close_col = intraday_df["Close"]
     low_col = intraday_df["Low"] if USE_INTRADAY_LOW else intraday_df["Close"]
 
@@ -559,7 +543,6 @@ def detect_breakout(ticker: str, intraday_df: pd.DataFrame, daily_df: pd.DataFra
     current_open = float(intraday_df["Open"].iloc[-1])
     current_time = intraday_df.index[-1]
 
-    # --- AMBANG BREAKOUT ---
     if ENABLE_ATR_THRESHOLD:
         atr = calculate_atr_daily(daily_df, ATR_PERIOD)
         threshold_amount = atr * ATR_MULTIPLIER
@@ -569,12 +552,10 @@ def detect_breakout(ticker: str, intraday_df: pd.DataFrame, daily_df: pd.DataFra
         trigger_level = lowest_low * (1 + BREAKOUT_PERCENT / 100)
         threshold_desc = f"{BREAKOUT_PERCENT}% dari titik terendah"
 
-    # --- CEK HARGA ---
     price_for_check = current_close if ENABLE_CLOSE_CONFIRMATION else current_high
     is_price_breakout = price_for_check >= trigger_level
     actual_percent_from_low = ((current_close - lowest_low) / lowest_low) * 100
 
-    # --- RESULT ---
     result = {
         "ticker": ticker,
         "current_price": current_close,
@@ -636,7 +617,7 @@ def detect_breakout(ticker: str, intraday_df: pd.DataFrame, daily_df: pd.DataFra
         else:
             result["filters_failed"]["cvd"] = f"Buy {cvd_check['buy_ratio']*100:.0f}% (min {CVD_BUY_THRESHOLD*100:.0f}%)"
 
-    # --- FILTER 6: Multi-Timeframe Volume ---
+    # --- FILTER 6: MT Volume ---
     if ENABLE_MT_VOLUME:
         mt_vol_check = check_daily_volume_spike(daily_df)
         result["volume_filters"]["mt_volume"] = mt_vol_check
@@ -680,10 +661,8 @@ def detect_breakout(ticker: str, intraday_df: pd.DataFrame, daily_df: pd.DataFra
         else:
             result["filters_failed"]["obv"] = "OBV di bawah SMA → distribusi"
 
-    # --- FINAL DECISION ---
     result["is_final_breakout"] = is_price_breakout and len(result["filters_failed"]) == 0
     
-    # --- STRENGTH SCORE ---
     if ENABLE_STRENGTH_SCORE:
         result["strength_score"] = calculate_breakout_strength(result)
     
@@ -695,9 +674,7 @@ def detect_breakout(ticker: str, intraday_df: pd.DataFrame, daily_df: pd.DataFra
 # =====================================================================
 
 def calculate_breakout_strength(result: Dict) -> Dict:
-    """
-    Hitung skor kekuatan breakout dari semua filter (0-100).
-    """
+    """Hitung skor kekuatan breakout dari semua filter (0-100)."""
     score = 0
     max_score = 0
     
@@ -766,10 +743,8 @@ def calculate_breakout_strength(result: Dict) -> Dict:
         if result["obv_check"].get("passed", False):
             score += 10
     
-    # Normalisasi
     final_score = (score / max_score) * 100 if max_score > 0 else 0
     
-    # Kategori
     if final_score >= STRONG_SCORE_THRESHOLD:
         category = "🔥 STRONG"
         emoji = "🔥🔥🔥"
@@ -824,7 +799,6 @@ def format_alert_message(result: Dict) -> str:
     emoji = strength.get("emoji", "🚀")
     category = strength.get("category", "BREAKOUT")
     
-    # Volume summary
     vol_details = []
     if "volume_filters" in result:
         for key, check in result["volume_filters"].items():
@@ -911,7 +885,6 @@ def main():
         logger.info(f"[{idx+1}/{len(TICKERS)}] Memproses {ticker}...")
         logger.info(f"{'='*40}")
         
-        # --- AMBIL DATA ---
         intraday_df = get_intraday_data(ticker)
         if intraday_df is None:
             logger.warning(f"[{ticker}] Data intraday tidak tersedia, skip.")
@@ -922,7 +895,6 @@ def main():
             logger.warning(f"[{ticker}] Data harian tidak tersedia, skip.")
             continue
 
-        # --- LIQUIDITY CHECK ---
         is_liquid, liquidity_details = check_liquidity(ticker, intraday_df, daily_df)
         if not is_liquid:
             logger.warning(f"[{ticker}] Tidak likuid, skip.")
@@ -936,11 +908,9 @@ def main():
             if key != "is_liquid" and "✅" in str(value):
                 logger.info(f"  {key}: {value}")
 
-        # --- DETEKSI BREAKOUT ---
         result = detect_breakout(ticker, intraday_df, daily_df)
         all_results.append(result)
 
-        # --- LOG DETAIL ---
         logger.info(
             f"[{ticker}] Rp{result['current_price']:,.0f} @ {result['current_time']} | "
             f"Low: Rp{result['lowest_low']:,.0f} | Trigger: Rp{result['trigger_level']:,.0f} | "
@@ -952,7 +922,6 @@ def main():
             score = result["strength_score"]
             logger.info(f"[{ticker}] Strength Score: {score['score']}/100 - {score['category']}")
 
-        # --- LOG FILTER ---
         if result["filters_failed"]:
             logger.info(f"[{ticker}] ❌ Filter Gagal:")
             for name, detail in result["filters_failed"].items():
@@ -963,7 +932,6 @@ def main():
             for name, detail in result["filters_passed"].items():
                 logger.info(f"  ✓ {name}: {detail}")
 
-        # --- STATE CHECK ---
         state = load_state(ticker)
         current_time_str = str(result["current_time"])
 
@@ -972,7 +940,6 @@ def main():
             and state.get("last_lowest_low") == result["lowest_low"]
         )
 
-        # --- SEND NOTIFICATION ---
         if result["is_final_breakout"] and not already_alerted:
             message = format_alert_message(result)
             send_telegram_message(message)
@@ -984,39 +951,28 @@ def main():
             alerts_sent += 1
         else:
             if result["is_price_breakout"] and not result["is_final_breakout"]:
-                logger.info(f"[{ticker}] {format_rejected_message(result)}")
+                lines = ["⚠️ Breakout harga terdeteksi tapi TIDAK lolos filter:"]
+                for name, detail in result["filters_failed"].items():
+                    lines.append(f"  ✗ {name}: {detail}")
+                if "strength_score" in result:
+                    score = result["strength_score"].get("score", 0)
+                    lines.append(f"\n📊 Strength Score: {score}/100")
+                logger.info("\n".join(lines))
             else:
                 logger.info(f"[{ticker}] ℹ️ Belum breakout atau sudah pernah alert.")
             save_state(ticker, state)
         
-        # --- DELAY ANTAR SAHAM (kecuali terakhir) ---
         if idx < len(TICKERS) - 1 and BATCH_DELAY_SECONDS > 0:
-            import time
             logger.info(f"⏱️ Delay {BATCH_DELAY_SECONDS}s sebelum saham berikutnya...")
             time.sleep(BATCH_DELAY_SECONDS)
 
-    # --- SUMMARY ---
     logger.info("\n" + "=" * 60)
     logger.info(f"✅ Selesai memproses {len(TICKERS)} saham. Alert terkirim: {alerts_sent}")
     logger.info("=" * 60)
     
-    # Kirim summary jika ada lebih dari 1 saham
     if len(TICKERS) > 1 and alerts_sent > 0:
         summary_message = format_summary_message(all_results)
         send_telegram_message(summary_message)
-
-
-def format_rejected_message(result: Dict) -> str:
-    """Format pesan untuk breakout yang ditolak."""
-    lines = ["⚠️ Breakout harga terdeteksi tapi TIDAK lolos filter:"]
-    for name, detail in result["filters_failed"].items():
-        lines.append(f"  ✗ {name}: {detail}")
-    
-    if "strength_score" in result:
-        score = result["strength_score"].get("score", 0)
-        lines.append(f"\n📊 Strength Score: {score}/100")
-    
-    return "\n".join(lines)
 
 
 if __name__ == "__main__":
