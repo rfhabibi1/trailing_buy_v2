@@ -40,89 +40,129 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 
+
+# =====================================================================
+# HELPER FUNCTIONS - SAFE ENV CONVERSION
+# =====================================================================
+
+def safe_int(value: str, default: int) -> int:
+    """Safe convert string ke int, handle empty string."""
+    if value is None or value == "":
+        return default
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def safe_float(value: str, default: float) -> float:
+    """Safe convert string ke float, handle empty string."""
+    if value is None or value == "":
+        return default
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def safe_str(value: str, default: str) -> str:
+    """Safe get string, handle None."""
+    if value is None or value == "":
+        return default
+    return value
+
+
+def safe_bool(value: str, default: bool) -> bool:
+    """Safe convert string ke bool, handle empty string."""
+    if value is None or value == "":
+        return default
+    return value.lower() == "true"
+
+
 # =====================================================================
 # CONFIGURATION - SEMUA DARI ENVIRONMENT VARIABLES
 # =====================================================================
 
 # --- SAHAM ---
-TICKER = os.environ.get("TICKER", "TINS.JK")
+TICKER = safe_str(os.environ.get("TICKER"), "TINS.JK")
 
 # --- DATA INTRADAY (TIMING) ---
-INTRADAY_INTERVAL = os.environ.get("INTRADAY_INTERVAL", "15m")
-INTRADAY_PERIOD_DAYS = int(os.environ.get("INTRADAY_PERIOD_DAYS", "5"))
-INTRADAY_LOOKBACK_BARS = int(os.environ.get("INTRADAY_LOOKBACK_BARS", "20"))
-BREAKOUT_PERCENT = float(os.environ.get("BREAKOUT_PERCENT", "5.0"))
-USE_INTRADAY_LOW = os.environ.get("USE_INTRADAY_LOW", "true").lower() == "true"
+INTRADAY_INTERVAL = safe_str(os.environ.get("INTRADAY_INTERVAL"), "15m")
+INTRADAY_PERIOD_DAYS = safe_int(os.environ.get("INTRADAY_PERIOD_DAYS"), 5)
+INTRADAY_LOOKBACK_BARS = safe_int(os.environ.get("INTRADAY_LOOKBACK_BARS"), 20)
+BREAKOUT_PERCENT = safe_float(os.environ.get("BREAKOUT_PERCENT"), 5.0)
+USE_INTRADAY_LOW = safe_bool(os.environ.get("USE_INTRADAY_LOW"), True)
 
 # --- FILTER 1: VOLUME RATIO (Basic) ---
-ENABLE_VOLUME_FILTER = os.environ.get("ENABLE_VOLUME_FILTER", "true").lower() == "true"
-VOLUME_LOOKBACK_BARS = int(os.environ.get("VOLUME_LOOKBACK_BARS", "20"))
-VOLUME_MULTIPLIER = float(os.environ.get("VOLUME_MULTIPLIER", "1.5"))
+ENABLE_VOLUME_FILTER = safe_bool(os.environ.get("ENABLE_VOLUME_FILTER"), True)
+VOLUME_LOOKBACK_BARS = safe_int(os.environ.get("VOLUME_LOOKBACK_BARS"), 20)
+VOLUME_MULTIPLIER = safe_float(os.environ.get("VOLUME_MULTIPLIER"), 1.5)
 
 # --- FILTER 2: VOLUME SPIKE (Z-Score) ---
-ENABLE_VOLUME_SPIKE = os.environ.get("ENABLE_VOLUME_SPIKE", "true").lower() == "true"
-VOLUME_SPIKE_THRESHOLD = float(os.environ.get("VOLUME_SPIKE_THRESHOLD", "2.0"))
-VOLUME_SPIKE_LOOKBACK = int(os.environ.get("VOLUME_SPIKE_LOOKBACK", "20"))
+ENABLE_VOLUME_SPIKE = safe_bool(os.environ.get("ENABLE_VOLUME_SPIKE"), True)
+VOLUME_SPIKE_THRESHOLD = safe_float(os.environ.get("VOLUME_SPIKE_THRESHOLD"), 2.0)
+VOLUME_SPIKE_LOOKBACK = safe_int(os.environ.get("VOLUME_SPIKE_LOOKBACK"), 20)
 
 # --- FILTER 3: VOLUME TREND (Slope) ---
-ENABLE_VOLUME_TREND = os.environ.get("ENABLE_VOLUME_TREND", "true").lower() == "true"
-VOLUME_TREND_BARS = int(os.environ.get("VOLUME_TREND_BARS", "10"))
+ENABLE_VOLUME_TREND = safe_bool(os.environ.get("ENABLE_VOLUME_TREND"), True)
+VOLUME_TREND_BARS = safe_int(os.environ.get("VOLUME_TREND_BARS"), 10)
 
 # --- FILTER 4: VWAP ---
-ENABLE_VWAP_FILTER = os.environ.get("ENABLE_VWAP_FILTER", "true").lower() == "true"
-VWAP_LOOKBACK_BARS = int(os.environ.get("VWAP_LOOKBACK_BARS", "20"))
+ENABLE_VWAP_FILTER = safe_bool(os.environ.get("ENABLE_VWAP_FILTER"), True)
+VWAP_LOOKBACK_BARS = safe_int(os.environ.get("VWAP_LOOKBACK_BARS"), 20)
 
 # --- FILTER 5: CVD (Cumulative Volume Delta) ---
-ENABLE_CVD_FILTER = os.environ.get("ENABLE_CVD_FILTER", "true").lower() == "true"
-CVD_LOOKBACK_BARS = int(os.environ.get("CVD_LOOKBACK_BARS", "10"))
-CVD_BUY_THRESHOLD = float(os.environ.get("CVD_BUY_THRESHOLD", "0.55"))  # 55% buy volume
+ENABLE_CVD_FILTER = safe_bool(os.environ.get("ENABLE_CVD_FILTER"), True)
+CVD_LOOKBACK_BARS = safe_int(os.environ.get("CVD_LOOKBACK_BARS"), 10)
+CVD_BUY_THRESHOLD = safe_float(os.environ.get("CVD_BUY_THRESHOLD"), 0.55)
 
 # --- FILTER 6: MULTI-TIMEFRAME VOLUME ---
-ENABLE_MT_VOLUME = os.environ.get("ENABLE_MT_VOLUME", "true").lower() == "true"
-MT_VOLUME_DAILY_LOOKBACK = int(os.environ.get("MT_VOLUME_DAILY_LOOKBACK", "20"))
-MT_VOLUME_DAILY_MULTIPLIER = float(os.environ.get("MT_VOLUME_DAILY_MULTIPLIER", "1.2"))
+ENABLE_MT_VOLUME = safe_bool(os.environ.get("ENABLE_MT_VOLUME"), True)
+MT_VOLUME_DAILY_LOOKBACK = safe_int(os.environ.get("MT_VOLUME_DAILY_LOOKBACK"), 20)
+MT_VOLUME_DAILY_MULTIPLIER = safe_float(os.environ.get("MT_VOLUME_DAILY_MULTIPLIER"), 1.2)
 
 # --- FILTER 7: VOLUME-PRICE CORRELATION ---
-ENABLE_VOLUME_PRICE_CORRELATION = os.environ.get("ENABLE_VOLUME_PRICE_CORRELATION", "true").lower() == "true"
-VOLUME_PRICE_CORR_BARS = int(os.environ.get("VOLUME_PRICE_CORR_BARS", "10"))
+ENABLE_VOLUME_PRICE_CORRELATION = safe_bool(os.environ.get("ENABLE_VOLUME_PRICE_CORRELATION"), True)
+VOLUME_PRICE_CORR_BARS = safe_int(os.environ.get("VOLUME_PRICE_CORR_BARS"), 10)
 
 # --- CLOSE CONFIRMATION ---
-ENABLE_CLOSE_CONFIRMATION = os.environ.get("ENABLE_CLOSE_CONFIRMATION", "true").lower() == "true"
+ENABLE_CLOSE_CONFIRMATION = safe_bool(os.environ.get("ENABLE_CLOSE_CONFIRMATION"), True)
 
 # --- MTF FILTER (Daily) ---
-ENABLE_MTF_FILTER = os.environ.get("ENABLE_MTF_FILTER", "true").lower() == "true"
-MTF_SMA_WEEKS = int(os.environ.get("MTF_SMA_WEEKS", "10"))
+ENABLE_MTF_FILTER = safe_bool(os.environ.get("ENABLE_MTF_FILTER"), True)
+MTF_SMA_WEEKS = safe_int(os.environ.get("MTF_SMA_WEEKS"), 10)
 
 # --- ATR THRESHOLD (Daily) ---
-ENABLE_ATR_THRESHOLD = os.environ.get("ENABLE_ATR_THRESHOLD", "false").lower() == "true"
-ATR_PERIOD = int(os.environ.get("ATR_PERIOD", "14"))
-ATR_MULTIPLIER = float(os.environ.get("ATR_MULTIPLIER", "1.5"))
+ENABLE_ATR_THRESHOLD = safe_bool(os.environ.get("ENABLE_ATR_THRESHOLD"), False)
+ATR_PERIOD = safe_int(os.environ.get("ATR_PERIOD"), 14)
+ATR_MULTIPLIER = safe_float(os.environ.get("ATR_MULTIPLIER"), 1.5)
 
 # --- OBV FILTER (Daily) ---
-ENABLE_OBV_FILTER = os.environ.get("ENABLE_OBV_FILTER", "true").lower() == "true"
-OBV_SMA_PERIOD = int(os.environ.get("OBV_SMA_PERIOD", "20"))
+ENABLE_OBV_FILTER = safe_bool(os.environ.get("ENABLE_OBV_FILTER"), True)
+OBV_SMA_PERIOD = safe_int(os.environ.get("OBV_SMA_PERIOD"), 20)
 
 # --- LIQUIDITY CHECK ---
-ENABLE_LIQUIDITY_CHECK = os.environ.get("ENABLE_LIQUIDITY_CHECK", "true").lower() == "true"
-MIN_INTRADAY_BARS = int(os.environ.get("MIN_INTRADAY_BARS", "30"))
-MAX_ZERO_VOLUME_BAR_RATIO = float(os.environ.get("MAX_ZERO_VOLUME_BAR_RATIO", "0.3"))
-MIN_AVG_DAILY_VALUE_RP = float(os.environ.get("MIN_AVG_DAILY_VALUE_RP", "1000000000"))
-LIQUIDITY_LOOKBACK_DAYS = int(os.environ.get("LIQUIDITY_LOOKBACK_DAYS", "20"))
+ENABLE_LIQUIDITY_CHECK = safe_bool(os.environ.get("ENABLE_LIQUIDITY_CHECK"), True)
+MIN_INTRADAY_BARS = safe_int(os.environ.get("MIN_INTRADAY_BARS"), 30)
+MAX_ZERO_VOLUME_BAR_RATIO = safe_float(os.environ.get("MAX_ZERO_VOLUME_BAR_RATIO"), 0.3)
+MIN_AVG_DAILY_VALUE_RP = safe_float(os.environ.get("MIN_AVG_DAILY_VALUE_RP"), 1000000000)
+LIQUIDITY_LOOKBACK_DAYS = safe_int(os.environ.get("LIQUIDITY_LOOKBACK_DAYS"), 20)
 
 # --- BREAKOUT STRENGTH SCORE ---
-ENABLE_STRENGTH_SCORE = os.environ.get("ENABLE_STRENGTH_SCORE", "true").lower() == "true"
-STRONG_SCORE_THRESHOLD = int(os.environ.get("STRONG_SCORE_THRESHOLD", "80"))
-MODERATE_SCORE_THRESHOLD = int(os.environ.get("MODERATE_SCORE_THRESHOLD", "60"))
+ENABLE_STRENGTH_SCORE = safe_bool(os.environ.get("ENABLE_STRENGTH_SCORE"), True)
+STRONG_SCORE_THRESHOLD = safe_int(os.environ.get("STRONG_SCORE_THRESHOLD"), 80)
+MODERATE_SCORE_THRESHOLD = safe_int(os.environ.get("MODERATE_SCORE_THRESHOLD"), 60)
 
 # --- TELEGRAM ---
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+TELEGRAM_BOT_TOKEN = safe_str(os.environ.get("TELEGRAM_BOT_TOKEN"), "")
+TELEGRAM_CHAT_ID = safe_str(os.environ.get("TELEGRAM_CHAT_ID"), "")
 
 # --- STATE ---
 STATE_FILE = "state/trailing_start_state.json"
 
 # --- DATA HARIAN (untuk konfirmasi) ---
-DAILY_PERIOD_DAYS = int(os.environ.get("DAILY_PERIOD_DAYS", "200"))
+DAILY_PERIOD_DAYS = safe_int(os.environ.get("DAILY_PERIOD_DAYS"), 200)
+
 
 # =====================================================================
 # LOGGING SETUP
@@ -294,7 +334,8 @@ def calculate_vwap(intraday_df: pd.DataFrame) -> Dict:
     """Filter 4: Hitung VWAP dan cek harga di atasnya."""
     df = intraday_df.tail(VWAP_LOOKBACK_BARS)
     typical_price = (df["High"] + df["Low"] + df["Close"]) / 3
-    vwap = (typical_price * df["Volume"]).sum() / df["Volume"].sum() if df["Volume"].sum() > 0 else 0
+    total_volume = df["Volume"].sum()
+    vwap = (typical_price * df["Volume"]).sum() / total_volume if total_volume > 0 else 0
     current_close = float(intraday_df["Close"].iloc[-1])
     
     return {
@@ -773,7 +814,7 @@ def format_alert_message(result: Dict) -> str:
     ]
     
     for name, detail in result["filters_passed"].items():
-        if name not in ["close_confirmation", "atr"]:  # Skip yang sudah dijelaskan
+        if name not in ["close_confirmation", "atr"]:
             lines.append(f"  • {name}: {detail}")
     
     if result["filters_failed"]:
@@ -795,7 +836,6 @@ def format_rejected_message(result: Dict) -> str:
     for name, detail in result["filters_failed"].items():
         lines.append(f"  ✗ {name}: {detail}")
     
-    # Tampilkan skor juga
     if "strength_score" in result:
         score = result["strength_score"].get("score", 0)
         lines.append(f"\n📊 Strength Score: {score}/100")
