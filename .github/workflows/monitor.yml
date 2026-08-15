@@ -2,10 +2,10 @@ name: Trailing Start Monitor
 
 on:
   schedule:
-    # Jam bursa Indonesia (WIB = UTC+7): 09:00-16:15 WIB = 02:00-09:15 UTC
-    # Cron: setiap 5 menit, jam 02:00-09:59 UTC, Senin-Jumat
-    - cron: '*/5 2-9 * * 1-5'
-  workflow_dispatch:  # Manual trigger untuk testing
+    # Jam bursa Indonesia (WIB = UTC+7): 09:00-16:00 WIB = 02:00-09:00 UTC
+    # Cron: setiap 5 menit, jam 02:00-08:59 UTC, Senin-Jumat
+    - cron: '*/5 2-8 * * 1-5'
+  workflow_dispatch:
 
 jobs:
   check-breakout:
@@ -27,12 +27,8 @@ jobs:
       - name: Create state directory
         run: |
           mkdir -p state
-          # Buat state file default jika TICKERS tidak diset
-          if [ -z "${{ vars.TICKERS }}" ]; then
-            if [ ! -f "state/trailing_start_state_TINS_JK.json" ]; then
-              echo '{"last_alert_time": null, "last_lowest_low": null, "last_price": null}' > state/trailing_start_state_TINS_JK.json
-            fi
-          else
+          # Buat state file untuk setiap ticker di TICKERS
+          if [ -n "${{ vars.TICKERS }}" ]; then
             IFS=',' read -ra TICKER_LIST <<< "${{ vars.TICKERS }}"
             for ticker in "${TICKER_LIST[@]}"; do
               ticker_clean=$(echo "$ticker" | tr '.' '_' | xargs)
@@ -41,6 +37,10 @@ jobs:
                 echo '{"last_alert_time": null, "last_lowest_low": null, "last_price": null}' > "$state_file"
               fi
             done
+          else
+            if [ ! -f "state/trailing_start_state_TINS_JK.json" ]; then
+              echo '{"last_alert_time": null, "last_lowest_low": null, "last_price": null}' > state/trailing_start_state_TINS_JK.json
+            fi
           fi
         shell: bash
 
