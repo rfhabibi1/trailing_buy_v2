@@ -6,7 +6,7 @@ on:
 jobs:
   test-breakout:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
 
     steps:
       - name: Checkout repository
@@ -22,7 +22,10 @@ jobs:
 
       - name: Run Breakout Simulation Test
         env:
-          TICKER: ${{ vars.TICKER }}
+          TICKERS: ${{ vars.TICKERS }}
+          INTRADAY_INTERVAL: ${{ vars.INTRADAY_INTERVAL }}
+          INTRADAY_LOOKBACK_BARS: ${{ vars.INTRADAY_LOOKBACK_BARS }}
+          BREAKOUT_PERCENT: ${{ vars.BREAKOUT_PERCENT }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python test_breakout_simulation.py
