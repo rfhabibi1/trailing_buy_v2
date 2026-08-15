@@ -12,7 +12,7 @@ permissions:
 jobs:
   check-breakout:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
 
     steps:
       - name: Checkout repository
@@ -28,8 +28,9 @@ jobs:
 
       - name: Jalankan pengecekan breakout
         env:
-          # --- SAHAM ---
-          TICKER: ${{ vars.TICKER }}
+          # --- MULTI-TICKER ---
+          TICKERS: ${{ vars.TICKERS }}
+          MAX_TICKERS: ${{ vars.MAX_TICKERS }}
           
           # --- DATA INTRADAY ---
           INTRADAY_INTERVAL: ${{ vars.INTRADAY_INTERVAL }}
@@ -93,10 +94,16 @@ jobs:
           MIN_AVG_DAILY_VALUE_RP: ${{ vars.MIN_AVG_DAILY_VALUE_RP }}
           LIQUIDITY_LOOKBACK_DAYS: ${{ vars.LIQUIDITY_LOOKBACK_DAYS }}
           
+          # --- DAILY PERIOD ---
+          DAILY_PERIOD_DAYS: ${{ vars.DAILY_PERIOD_DAYS }}
+          
           # --- STRENGTH SCORE ---
           ENABLE_STRENGTH_SCORE: ${{ vars.ENABLE_STRENGTH_SCORE }}
           STRONG_SCORE_THRESHOLD: ${{ vars.STRONG_SCORE_THRESHOLD }}
           MODERATE_SCORE_THRESHOLD: ${{ vars.MODERATE_SCORE_THRESHOLD }}
+          
+          # --- BATCH ---
+          BATCH_DELAY_SECONDS: ${{ vars.BATCH_DELAY_SECONDS }}
           
           # --- TELEGRAM ---
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -104,11 +111,11 @@ jobs:
           
         run: python trailing_start_check_once.py
 
-      - name: Commit state file jika berubah
+      - name: Commit state files jika berubah
         run: |
           git config user.name "trailing-start-bot"
           git config user.email "bot@users.noreply.github.com"
-          git add state/trailing_start_state.json
-          git diff --staged --quiet || git commit -m "Update state [skip ci]"
+          git add state/*.json
+          git diff --staged --quiet || git commit -m "Update states [skip ci]"
           git push
         continue-on-error: true
