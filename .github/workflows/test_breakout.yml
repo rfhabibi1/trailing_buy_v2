@@ -1,0 +1,78 @@
+name: Test Breakout (Manual)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-breakout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install yfinance requests pandas numpy
+
+      - name: Jalankan pengecekan breakout
+        env:
+          TICKERS: ${{ vars.TICKERS }}
+          INTRADAY_INTERVAL: ${{ vars.INTRADAY_INTERVAL }}
+          INTRADAY_PERIOD_DAYS: ${{ vars.INTRADAY_PERIOD_DAYS }}
+          INTRADAY_LOOKBACK_BARS: ${{ vars.INTRADAY_LOOKBACK_BARS }}
+          BREAKOUT_PERCENT: ${{ vars.BREAKOUT_PERCENT }}
+          USE_INTRADAY_LOW: ${{ vars.USE_INTRADAY_LOW }}
+          ENABLE_VOLUME_FILTER: ${{ vars.ENABLE_VOLUME_FILTER }}
+          VOLUME_LOOKBACK_BARS: ${{ vars.VOLUME_LOOKBACK_BARS }}
+          VOLUME_MULTIPLIER: ${{ vars.VOLUME_MULTIPLIER }}
+          ENABLE_VOLUME_SPIKE: ${{ vars.ENABLE_VOLUME_SPIKE }}
+          VOLUME_SPIKE_THRESHOLD: ${{ vars.VOLUME_SPIKE_THRESHOLD }}
+          VOLUME_SPIKE_LOOKBACK: ${{ vars.VOLUME_SPIKE_LOOKBACK }}
+          ENABLE_VOLUME_TREND: ${{ vars.ENABLE_VOLUME_TREND }}
+          VOLUME_TREND_BARS: ${{ vars.VOLUME_TREND_BARS }}
+          ENABLE_VWAP_FILTER: ${{ vars.ENABLE_VWAP_FILTER }}
+          VWAP_LOOKBACK_BARS: ${{ vars.VWAP_LOOKBACK_BARS }}
+          ENABLE_CVD_FILTER: ${{ vars.ENABLE_CVD_FILTER }}
+          CVD_LOOKBACK_BARS: ${{ vars.CVD_LOOKBACK_BARS }}
+          CVD_BUY_THRESHOLD: ${{ vars.CVD_BUY_THRESHOLD }}
+          ENABLE_MT_VOLUME: ${{ vars.ENABLE_MT_VOLUME }}
+          MT_VOLUME_DAILY_LOOKBACK: ${{ vars.MT_VOLUME_DAILY_LOOKBACK }}
+          MT_VOLUME_DAILY_MULTIPLIER: ${{ vars.MT_VOLUME_DAILY_MULTIPLIER }}
+          ENABLE_VOLUME_PRICE_CORRELATION: ${{ vars.ENABLE_VOLUME_PRICE_CORRELATION }}
+          VOLUME_PRICE_CORR_BARS: ${{ vars.VOLUME_PRICE_CORR_BARS }}
+          ENABLE_CLOSE_CONFIRMATION: ${{ vars.ENABLE_CLOSE_CONFIRMATION }}
+          ENABLE_MTF_FILTER: ${{ vars.ENABLE_MTF_FILTER }}
+          MTF_SMA_WEEKS: ${{ vars.MTF_SMA_WEEKS }}
+          ENABLE_ATR_THRESHOLD: ${{ vars.ENABLE_ATR_THRESHOLD }}
+          ATR_PERIOD: ${{ vars.ATR_PERIOD }}
+          ATR_MULTIPLIER: ${{ vars.ATR_MULTIPLIER }}
+          ENABLE_OBV_FILTER: ${{ vars.ENABLE_OBV_FILTER }}
+          OBV_SMA_PERIOD: ${{ vars.OBV_SMA_PERIOD }}
+          ENABLE_LIQUIDITY_CHECK: ${{ vars.ENABLE_LIQUIDITY_CHECK }}
+          MIN_INTRADAY_BARS: ${{ vars.MIN_INTRADAY_BARS }}
+          MAX_ZERO_VOLUME_BAR_RATIO: ${{ vars.MAX_ZERO_VOLUME_BAR_RATIO }}
+          MIN_AVG_DAILY_VALUE_RP: ${{ vars.MIN_AVG_DAILY_VALUE_RP }}
+          LIQUIDITY_LOOKBACK_DAYS: ${{ vars.LIQUIDITY_LOOKBACK_DAYS }}
+          DAILY_PERIOD_DAYS: ${{ vars.DAILY_PERIOD_DAYS }}
+          ENABLE_STRENGTH_SCORE: ${{ vars.ENABLE_STRENGTH_SCORE }}
+          STRONG_SCORE_THRESHOLD: ${{ vars.STRONG_SCORE_THRESHOLD }}
+          MODERATE_SCORE_THRESHOLD: ${{ vars.MODERATE_SCORE_THRESHOLD }}
+          BATCH_DELAY_SECONDS: ${{ vars.BATCH_DELAY_SECONDS }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python trailing_start_check_once.py
+
+      - name: Commit state files jika berubah
+        run: |
+          git config user.name "trailing-start-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add state/*.json || true
+          git diff --staged --quiet || git commit -m "Update states [skip ci]"
+          git push
+        continue-on-error: true
