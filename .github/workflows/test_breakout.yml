@@ -20,9 +20,17 @@ jobs:
       - name: Install dependencies
         run: pip install yfinance requests pandas numpy
 
+      - name: Debug Environment Variables
+        run: |
+          echo "TICKERS: ${{ vars.TICKERS }}"
+          echo "TICKER: ${{ vars.TICKER }}"
+          echo "INTRADAY_INTERVAL: ${{ vars.INTRADAY_INTERVAL }}"
+          echo "BREAKOUT_PERCENT: ${{ vars.BREAKOUT_PERCENT }}"
+
       - name: Run Breakout Simulation Test
         env:
           TICKERS: ${{ vars.TICKERS }}
+          TICKER: ${{ vars.TICKER }}
           INTRADAY_INTERVAL: ${{ vars.INTRADAY_INTERVAL }}
           INTRADAY_LOOKBACK_BARS: ${{ vars.INTRADAY_LOOKBACK_BARS }}
           BREAKOUT_PERCENT: ${{ vars.BREAKOUT_PERCENT }}
