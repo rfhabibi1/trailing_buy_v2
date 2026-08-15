@@ -772,97 +772,95 @@ def calculate_breakout_strength(result: Dict) -> Dict:
 # =====================================================================
 
 def send_telegram_message(message: str) -> bool:
-    """Kirim notifikasi ke Telegram."""
+    """Kirim notifikasi ke Telegram - plain text (AMAN)."""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         logger.warning("TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID belum diset!")
         logger.info(f"[SIMULASI PESAN]\n{message}")
         return False
 
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
 
     try:
-        response = requests.post(url, data=payload, timeout=10)
+        response = requests.post(url, data=payload, timeout=15)
         response.raise_for_status()
-        logger.info("Notifikasi Telegram berhasil terkirim.")
-        return True
+        data = response.json()
+        
+        if data.get("ok"):
+            logger.info("✅ Notifikasi Telegram berhasil terkirim!")
+            return True
+        else:
+            logger.error(f"❌ Telegram error: {data.get('description', 'Unknown error')}")
+            return False
+            
     except Exception as e:
-        logger.error(f"Gagal kirim notifikasi Telegram: {e}")
+        logger.error(f"❌ Gagal kirim notifikasi: {e}")
         return False
 
 
 def format_alert_message(result: Dict) -> str:
-    """Format pesan notifikasi Telegram."""
+    """Format pesan notifikasi Telegram - plain text."""
     ticker = result.get("ticker", "UNKNOWN")
     strength = result.get("strength_score", {})
     score = strength.get("score", 0)
-    emoji = strength.get("emoji", "🚀")
     category = strength.get("category", "BREAKOUT")
     
-    vol_details = []
-    if "volume_filters" in result:
-        for key, check in result["volume_filters"].items():
-            if key == "volume_ratio" and check.get("passed"):
-                vol_details.append(f"Ratio {check['ratio']:.2f}x")
-            elif key == "volume_spike" and check.get("passed"):
-                vol_details.append(f"Spike Z={check['z_score']:.1f}")
-            elif key == "vwap" and check.get("passed"):
-                vol_details.append(f"VWAP+ {check['diff_percent']:.1f}%")
-            elif key == "cvd" and check.get("passed"):
-                vol_details.append(f"CVD Buy {check['buy_ratio']*100:.0f}%")
+    # Header
+    separator = "=" * 50
     
-    vol_text = ", ".join(vol_details) if vol_details else "Standard"
-
     lines = [
-        f"{emoji} *{category}*",
+        f"🚀 {category} - BREAKOUT TERDETEKSI",
+        separator,
         "",
-        f"📊 *{ticker}* | {INTRADAY_INTERVAL}",
-        f"💵 Rp{result['current_price']:,.0f} (↑{result['actual_percent_from_low']:.2f}%)",
-        f"📉 Low: Rp{result['lowest_low']:,.0f}",
-        f"🎯 Trigger: Rp{result['trigger_level']:,.0f}",
+        f"📊 SAHAM: {ticker}",
+        f"📈 INTERVAL: {INTRADAY_INTERVAL}",
         "",
-        f"📈 *Volume: {vol_text}*",
+        f"💰 HARGA: Rp{result['current_price']:,.0f}",
+        f"📈 NAIK: {result['actual_percent_from_low']:.2f}% dari Low",
+        f"📉 LOW: Rp{result['lowest_low']:,.0f}",
+        f"🎯 TRIGGER: Rp{result['trigger_level']:,.0f}",
+        f"📋 {result['threshold_desc']}",
         "",
-        f"📊 *Strength Score: {score}/100*",
+        f"📊 STRENGTH SCORE: {score}/100 - {category}",
         "",
-        "✅ *Filter Lolos:*"
+        "✅ FILTER LOLOS:"
     ]
     
-    for name, detail in result["filters_passed"].items():
-        if name not in ["close_confirmation", "atr"]:
-            lines.append(f"  • {name}: {detail}")
+    # Filter yang lolos
+    if result["filters_passed"]:
+        for name, detail in result["filters_passed"].items():
+            if name not in ["close_confirmation", "atr"]:
+                lines.append(f"  ✅ {name}: {detail}")
+    else:
+        lines.append("  (tidak ada filter yang lolos)")
     
+    # Filter yang gagal (jika ada)
     if result["filters_failed"]:
         lines.append("")
-        lines.append("❌ *Filter Gagal:*")
+        lines.append("❌ FILTER GAGAL:")
         for name, detail in result["filters_failed"].items():
-            lines.append(f"  • {name}: {detail}")
+            lines.append(f"  ❌ {name}: {detail}")
+    
+    # Volume details
+    if "volume_filters" in result:
+        lines.append("")
+        lines.append("📊 VOLUME DETAILS:")
+        for key, check in result["volume_filters"].items():
+            if key == "volume_ratio" and check.get("passed"):
+                lines.append(f"  📈 Ratio: {check['ratio']:.2f}x (avg: {check['avg_volume']:,.0f})")
+            elif key == "volume_spike" and check.get("passed"):
+                lines.append(f"  ⚡ Spike: Z={check['z_score']:.2f}")
+            elif key == "vwap" and check.get("passed"):
+                lines.append(f"  📊 VWAP: {check['diff_percent']:.1f}% di atas")
+            elif key == "cvd" and check.get("passed"):
+                lines.append(f"  📊 CVD: Buy {check['buy_ratio']*100:.0f}%")
     
     lines.append("")
-    lines.append(f"🕐 {result['current_time'].strftime('%Y-%m-%d %H:%M')} WIB")
-    lines.append(f"⏱️ {datetime.now().strftime('%H:%M:%S')} - Monitor")
+    lines.append(f"🕐 WAKTU: {result['current_time'].strftime('%Y-%m-%d %H:%M')} WIB")
+    lines.append(f"⏱️ PROSES: {datetime.now().strftime('%H:%M:%S')} WIB")
+    lines.append(separator)
+    lines.append("📌 HANYA EMITEN YANG MEMENUHI SYARAT")
 
-    return "\n".join(lines)
-
-
-def format_summary_message(results: List[Dict]) -> str:
-    """Format pesan ringkasan semua saham yang dipantau."""
-    lines = [
-        "📊 *SUMMARY - SEMUA SAHAM*",
-        "",
-        f"🕐 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} WIB",
-        ""
-    ]
-    
-    for r in results:
-        ticker = r.get("ticker", "UNKNOWN")
-        price = r.get("current_price", 0)
-        breakout = "✅ BREAKOUT" if r.get("is_final_breakout") else "⏳ Normal"
-        score = r.get("strength_score", {}).get("score", 0) if r.get("strength_score") else 0
-        percent = r.get("actual_percent_from_low", 0)
-        
-        lines.append(f"• *{ticker}*: Rp{price:,.0f} | ↑{percent:.1f}% | {breakout} | Score: {score}/100")
-    
     return "\n".join(lines)
 
 
@@ -879,6 +877,7 @@ def main():
     
     all_results = []
     alerts_sent = 0
+    alert_messages = []
     
     for idx, ticker in enumerate(TICKERS):
         logger.info(f"\n{'='*40}")
@@ -922,15 +921,16 @@ def main():
             score = result["strength_score"]
             logger.info(f"[{ticker}] Strength Score: {score['score']}/100 - {score['category']}")
 
-        if result["filters_failed"]:
-            logger.info(f"[{ticker}] ❌ Filter Gagal:")
-            for name, detail in result["filters_failed"].items():
-                logger.info(f"  ✗ {name}: {detail}")
-
+        # Log filter yang lolos/gagal
         if result["filters_passed"]:
             logger.info(f"[{ticker}] ✅ Filter Lolos:")
             for name, detail in result["filters_passed"].items():
                 logger.info(f"  ✓ {name}: {detail}")
+
+        if result["filters_failed"]:
+            logger.info(f"[{ticker}] ❌ Filter Gagal:")
+            for name, detail in result["filters_failed"].items():
+                logger.info(f"  ✗ {name}: {detail}")
 
         state = load_state(ticker)
         current_time_str = str(result["current_time"])
@@ -940,24 +940,25 @@ def main():
             and state.get("last_lowest_low") == result["lowest_low"]
         )
 
+        # --- HANYA KIRIM JIKA BREAKOUT DAN LOLOS SEMUA FILTER ---
         if result["is_final_breakout"] and not already_alerted:
             message = format_alert_message(result)
-            send_telegram_message(message)
+            alert_messages.append(message)
+            
+            # Kirim per ticker
+            success = send_telegram_message(message)
+            if success:
+                alerts_sent += 1
+                logger.info(f"[{ticker}] ✅ Alert terkirim!")
+            else:
+                logger.warning(f"[{ticker}] ⚠️ Alert gagal dikirim")
 
             state["last_alert_time"] = current_time_str
             state["last_lowest_low"] = result["lowest_low"]
             save_state(ticker, state)
-            logger.info(f"[{ticker}] ✅ Alert terkirim!")
-            alerts_sent += 1
         else:
             if result["is_price_breakout"] and not result["is_final_breakout"]:
-                lines = ["⚠️ Breakout harga terdeteksi tapi TIDAK lolos filter:"]
-                for name, detail in result["filters_failed"].items():
-                    lines.append(f"  ✗ {name}: {detail}")
-                if "strength_score" in result:
-                    score = result["strength_score"].get("score", 0)
-                    lines.append(f"\n📊 Strength Score: {score}/100")
-                logger.info("\n".join(lines))
+                logger.info(f"[{ticker}] ⚠️ Breakout harga tapi filter tidak lolos")
             else:
                 logger.info(f"[{ticker}] ℹ️ Belum breakout atau sudah pernah alert.")
             save_state(ticker, state)
@@ -966,12 +967,35 @@ def main():
             logger.info(f"⏱️ Delay {BATCH_DELAY_SECONDS}s sebelum saham berikutnya...")
             time.sleep(BATCH_DELAY_SECONDS)
 
+    # --- FINAL SUMMARY ---
     logger.info("\n" + "=" * 60)
     logger.info(f"✅ Selesai memproses {len(TICKERS)} saham. Alert terkirim: {alerts_sent}")
     logger.info("=" * 60)
     
-    if len(TICKERS) > 1 and alerts_sent > 0:
-        summary_message = format_summary_message(all_results)
+    # Kirim summary jika ada alert
+    if alerts_sent > 0:
+        summary_lines = [
+            "📊 SUMMARY BREAKOUT",
+            "=" * 30,
+            "",
+            f"🕐 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} WIB",
+            f"📊 Total Alert: {alerts_sent} saham",
+            ""
+        ]
+        
+        # Tambahkan detail per ticker yang alert
+        for msg in alert_messages:
+            # Ambil ticker dari pesan
+            for line in msg.split('\n'):
+                if "SAHAM:" in line:
+                    summary_lines.append(line)
+                    break
+        
+        summary_lines.append("")
+        summary_lines.append("=" * 30)
+        summary_lines.append("📌 HANYA EMITEN YANG MEMENUHI SYARAT")
+        
+        summary_message = "\n".join(summary_lines)
         send_telegram_message(summary_message)
 
 
