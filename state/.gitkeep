@@ -1,1 +1,2 @@
-
+# State directory untuk tracking alert per ticker
+# File-file state dibuat otomatis saat workflow berjalan
