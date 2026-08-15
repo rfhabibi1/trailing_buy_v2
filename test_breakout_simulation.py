@@ -40,7 +40,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # =====================================================================
-# CONFIG
+# CONFIG - GLOBAL
 # =====================================================================
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
@@ -54,11 +54,12 @@ if not TICKERS_RAW:
     # Fallback ke default
     TICKERS_RAW = "TINS.JK"
 
-# Parse tickers
-TICKERS = [t.strip().upper() for t in TICKERS_RAW.split(",") if t.strip()]
-
-# Hapus duplikat
-TICKERS = list(dict.fromkeys(TICKERS))
+# Parse tickers - HAPUS DUPLIKAT
+TICKERS = []
+for t in TICKERS_RAW.split(","):
+    t = t.strip().upper()
+    if t and t not in TICKERS:
+        TICKERS.append(t)
 
 INTRADAY_INTERVAL = os.environ.get("INTRADAY_INTERVAL", "15m")
 INTRADAY_LOOKBACK_BARS = int(os.environ.get("INTRADAY_LOOKBACK_BARS", "20"))
@@ -288,7 +289,8 @@ def main():
     # Jika tidak ada ticker, gunakan default
     if not TICKERS:
         logger.warning("⚠️ Tidak ada ticker ditemukan, menggunakan default: TINS.JK")
-        TICKERS = ["TINS.JK"]
+        # Fallback manual
+        TICKERS.append("TINS.JK")
     
     # Proses setiap ticker
     results = []
