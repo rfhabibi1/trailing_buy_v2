@@ -1,11 +1,16 @@
 """
 =====================================================================
-TRAILING START MONITOR - Versi Advanced (Volume-Confirmed Breakout)
+TRAILING START MONITOR - Multi-Ticker Advanced Version
 =====================================================================
 
 ARSITEKTUR HYBRID:
     - TIMING: Data INTRADAY (15m/30m/60m) untuk menangkap momen breakout
     - KONFIRMASI: Data HARIAN untuk MTF, ATR, OBV
+
+MULTI-TICKER SUPPORT:
+    - Monitor 3-5 saham sekaligus (atau lebih)
+    - Format TICKERS: "TINS.JK,ANTM.JK,TLKM.JK"
+    - Masing-masing saham punya state sendiri
 
 VOLUME FILTERS (ADVANCED):
     1. Volume Ratio      - Volume per-bar vs rata-rata (basic)
@@ -33,7 +38,7 @@ import os
 import sys
 import logging
 from datetime import datetime
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 
 import requests
 import yfinance as yf
@@ -79,12 +84,37 @@ def safe_bool(value: str, default: bool) -> bool:
     return value.lower() == "true"
 
 
+def parse_tickers(tickers_str: str) -> List[str]:
+    """
+    Parse string ticker menjadi list.
+    Format: "TINS.JK,ANTM.JK,TLKM.JK" atau "TINS.JK, ANTM.JK, TLKM.JK"
+    """
+    if not tickers_str or tickers_str == "":
+        return ["TINS.JK"]
+    
+    # Split by comma, trim whitespace, filter empty
+    tickers = [t.strip().upper() for t in tickers_str.split(",") if t.strip()]
+    
+    # Jika hanya 1 ticker tanpa koma, return sebagai list
+    if not tickers:
+        return ["TINS.JK"]
+    
+    return tickers
+
+
 # =====================================================================
 # CONFIGURATION - SEMUA DARI ENVIRONMENT VARIABLES
 # =====================================================================
 
-# --- SAHAM ---
-TICKER = safe_str(os.environ.get("TICKER"), "TINS.JK")
+# --- MULTI-TICKER ---
+TICKERS_RAW = safe_str(os.environ.get("TICKERS"), "TINS.JK")
+TICKERS = parse_tickers(TICKERS_RAW)
+MAX_TICKERS = safe_int(os.environ.get("MAX_TICKERS"), 10)  # Batas maksimal
+
+# Batasi jumlah ticker
+if len(TICKERS) > MAX_TICKERS:
+    logger.warning(f"Terlalu banyak ticker ({len(TICKERS)}), dibatasi menjadi {MAX_TICKERS}")
+    TICKERS = TICKERS[:MAX_TICKERS]
 
 # --- DATA INTRADAY (TIMING) ---
 INTRADAY_INTERVAL = safe_str(os.environ.get("INTRADAY_INTERVAL"), "15m")
@@ -158,10 +188,14 @@ TELEGRAM_BOT_TOKEN = safe_str(os.environ.get("TELEGRAM_BOT_TOKEN"), "")
 TELEGRAM_CHAT_ID = safe_str(os.environ.get("TELEGRAM_CHAT_ID"), "")
 
 # --- STATE ---
-STATE_FILE = "state/trailing_start_state.json"
+STATE_DIR = "state"
+STATE_FILE_PREFIX = "trailing_start_state"
 
 # --- DATA HARIAN (untuk konfirmasi) ---
 DAILY_PERIOD_DAYS = safe_int(os.environ.get("DAILY_PERIOD_DAYS"), 200)
+
+# --- BATCH PROCESSING ---
+BATCH_DELAY_SECONDS = safe_int(os.environ.get("BATCH_DELAY_SECONDS"), 2)  # Delay antar saham
 
 
 # =====================================================================
@@ -176,6 +210,37 @@ logger = logging.getLogger(__name__)
 
 
 # =====================================================================
+# STATE MANAGEMENT - PER TICKER
+# =====================================================================
+
+def get_state_file(ticker: str) -> str:
+    """Dapatkan path state file untuk ticker tertentu."""
+    # Sanitasi ticker untuk nama file (ganti . dengan _)
+    safe_ticker = ticker.replace(".", "_")
+    return os.path.join(STATE_DIR, f"{STATE_FILE_PREFIX}_{safe_ticker}.json")
+
+
+def load_state(ticker: str) -> Dict:
+    """Load state dari file per ticker."""
+    state_file = get_state_file(ticker)
+    if os.path.exists(state_file):
+        try:
+            with open(state_file, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"last_alert_time": None, "last_lowest_low": None, "last_price": None}
+
+
+def save_state(ticker: str, state: Dict) -> None:
+    """Save state ke file per ticker."""
+    os.makedirs(STATE_DIR, exist_ok=True)
+    state_file = get_state_file(ticker)
+    with open(state_file, "w") as f:
+        json.dump(state, f, default=str, indent=2)
+
+
+# =====================================================================
 # DATA FETCHING
 # =====================================================================
 
@@ -186,19 +251,19 @@ def get_intraday_data(ticker: str) -> Optional[pd.DataFrame]:
         df = t.history(period=f"{INTRADAY_PERIOD_DAYS}d", interval=INTRADAY_INTERVAL)
 
         if df.empty:
-            logger.warning(f"Data intraday kosong untuk {ticker}")
+            logger.warning(f"[{ticker}] Data intraday kosong")
             return None
 
         if len(df) < INTRADAY_LOOKBACK_BARS:
             logger.warning(
-                f"Data intraday hanya {len(df)} bar, kurang dari lookback "
-                f"{INTRADAY_LOOKBACK_BARS} bar yang diminta."
+                f"[{ticker}] Data intraday hanya {len(df)} bar, "
+                f"kurang dari lookback {INTRADAY_LOOKBACK_BARS} bar"
             )
 
         return df
 
     except Exception as e:
-        logger.error(f"Gagal ambil data intraday untuk {ticker}: {e}")
+        logger.error(f"[{ticker}] Gagal ambil data intraday: {e}")
         return None
 
 
@@ -210,13 +275,13 @@ def get_daily_data(ticker: str) -> Optional[pd.DataFrame]:
         df = t.history(period=f"{needed_days}d", interval="1d")
 
         if df.empty:
-            logger.warning(f"Data harian kosong untuk {ticker}")
+            logger.warning(f"[{ticker}] Data harian kosong")
             return None
 
         return df
 
     except Exception as e:
-        logger.error(f"Gagal ambil data harian untuk {ticker}: {e}")
+        logger.error(f"[{ticker}] Gagal ambil data harian: {e}")
         return None
 
 
@@ -224,7 +289,7 @@ def get_daily_data(ticker: str) -> Optional[pd.DataFrame]:
 # LIQUIDITY CHECK
 # =====================================================================
 
-def check_liquidity(intraday_df: pd.DataFrame, daily_df: pd.DataFrame) -> Tuple[bool, Dict]:
+def check_liquidity(ticker: str, intraday_df: pd.DataFrame, daily_df: pd.DataFrame) -> Tuple[bool, Dict]:
     """
     Cek likuiditas saham sebelum analisis lebih lanjut.
     Returns: (is_liquid, details)
@@ -350,15 +415,13 @@ def calculate_cvd(intraday_df: pd.DataFrame) -> Dict:
     """Filter 5: Cumulative Volume Delta - estimasi buy vs sell volume."""
     df = intraday_df.tail(CVD_LOOKBACK_BARS)
     
-    # Metode: berdasarkan posisi close dalam range high-low
     high = df["High"]
     low = df["Low"]
     close = df["Close"]
     volume = df["Volume"]
     
-    # Buy volume = proporsi dari close ke low
     range_price = high - low
-    range_price = range_price.replace(0, 1)  # Hindari division by zero
+    range_price = range_price.replace(0, 1)
     
     buy_volume = ((close - low) / range_price * volume).sum()
     sell_volume = ((high - close) / range_price * volume).sum()
@@ -438,7 +501,6 @@ def check_weekly_trend(daily_df: pd.DataFrame, sma_weeks: int) -> Dict:
     try:
         weekly = daily_df["Close"].resample("W").last()
         if len(weekly) < sma_weeks:
-            logger.warning("Data mingguan tidak cukup untuk MTF, default: lolos")
             return {"passed": True, "sufficient_data": False}
 
         weekly_sma = weekly.rolling(window=sma_weeks).mean().iloc[-1]
@@ -463,7 +525,6 @@ def check_obv_accumulation(daily_df: pd.DataFrame, sma_period: int) -> Dict:
         obv = (direction * daily_df["Volume"]).cumsum()
 
         if len(obv) < sma_period:
-            logger.warning("Data harian tidak cukup untuk OBV SMA, default: lolos")
             return {"passed": True, "sufficient_data": False}
 
         obv_sma = obv.rolling(window=sma_period).mean().iloc[-1]
@@ -485,7 +546,7 @@ def check_obv_accumulation(daily_df: pd.DataFrame, sma_period: int) -> Dict:
 # BREAKOUT DETECTION - MAIN
 # =====================================================================
 
-def detect_breakout(intraday_df: pd.DataFrame, daily_df: pd.DataFrame) -> Dict:
+def detect_breakout(ticker: str, intraday_df: pd.DataFrame, daily_df: pd.DataFrame) -> Dict:
     """
     Gabungkan TIMING (intraday) dan semua KONFIRMASI.
     """
@@ -515,6 +576,7 @@ def detect_breakout(intraday_df: pd.DataFrame, daily_df: pd.DataFrame) -> Dict:
 
     # --- RESULT ---
     result = {
+        "ticker": ticker,
         "current_price": current_close,
         "current_open": current_open,
         "current_high": current_high,
@@ -731,28 +793,6 @@ def calculate_breakout_strength(result: Dict) -> Dict:
 
 
 # =====================================================================
-# STATE MANAGEMENT
-# =====================================================================
-
-def load_state() -> Dict:
-    """Load state dari file."""
-    if os.path.exists(STATE_FILE):
-        try:
-            with open(STATE_FILE, "r") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {"last_alert_time": None, "last_lowest_low": None}
-
-
-def save_state(state: Dict) -> None:
-    """Save state ke file."""
-    os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f, default=str, indent=2)
-
-
-# =====================================================================
 # TELEGRAM NOTIFICATION
 # =====================================================================
 
@@ -778,6 +818,7 @@ def send_telegram_message(message: str) -> bool:
 
 def format_alert_message(result: Dict) -> str:
     """Format pesan notifikasi Telegram."""
+    ticker = result.get("ticker", "UNKNOWN")
     strength = result.get("strength_score", {})
     score = strength.get("score", 0)
     emoji = strength.get("emoji", "🚀")
@@ -801,7 +842,7 @@ def format_alert_message(result: Dict) -> str:
     lines = [
         f"{emoji} *{category}*",
         "",
-        f"📊 *{TICKER}* | {INTRADAY_INTERVAL}",
+        f"📊 *{ticker}* | {INTRADAY_INTERVAL}",
         f"💵 Rp{result['current_price']:,.0f} (↑{result['actual_percent_from_low']:.2f}%)",
         f"📉 Low: Rp{result['lowest_low']:,.0f}",
         f"🎯 Trigger: Rp{result['trigger_level']:,.0f}",
@@ -830,9 +871,144 @@ def format_alert_message(result: Dict) -> str:
     return "\n".join(lines)
 
 
+def format_summary_message(results: List[Dict]) -> str:
+    """Format pesan ringkasan semua saham yang dipantau."""
+    lines = [
+        "📊 *SUMMARY - SEMUA SAHAM*",
+        "",
+        f"🕐 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} WIB",
+        ""
+    ]
+    
+    for r in results:
+        ticker = r.get("ticker", "UNKNOWN")
+        price = r.get("current_price", 0)
+        breakout = "✅ BREAKOUT" if r.get("is_final_breakout") else "⏳ Normal"
+        score = r.get("strength_score", {}).get("score", 0) if r.get("strength_score") else 0
+        percent = r.get("actual_percent_from_low", 0)
+        
+        lines.append(f"• *{ticker}*: Rp{price:,.0f} | ↑{percent:.1f}% | {breakout} | Score: {score}/100")
+    
+    return "\n".join(lines)
+
+
+# =====================================================================
+# MAIN - MULTI-TICKER
+# =====================================================================
+
+def main():
+    logger.info("=" * 60)
+    logger.info("TRAILING START MONITOR - MULTI-TICKER MODE")
+    logger.info(f"Monitor {len(TICKERS)} saham: {', '.join(TICKERS)}")
+    logger.info(f"Interval: {INTRADAY_INTERVAL} | Lookback: {INTRADAY_LOOKBACK_BARS} bars")
+    logger.info("=" * 60)
+    
+    all_results = []
+    alerts_sent = 0
+    
+    for idx, ticker in enumerate(TICKERS):
+        logger.info(f"\n{'='*40}")
+        logger.info(f"[{idx+1}/{len(TICKERS)}] Memproses {ticker}...")
+        logger.info(f"{'='*40}")
+        
+        # --- AMBIL DATA ---
+        intraday_df = get_intraday_data(ticker)
+        if intraday_df is None:
+            logger.warning(f"[{ticker}] Data intraday tidak tersedia, skip.")
+            continue
+
+        daily_df = get_daily_data(ticker)
+        if daily_df is None:
+            logger.warning(f"[{ticker}] Data harian tidak tersedia, skip.")
+            continue
+
+        # --- LIQUIDITY CHECK ---
+        is_liquid, liquidity_details = check_liquidity(ticker, intraday_df, daily_df)
+        if not is_liquid:
+            logger.warning(f"[{ticker}] Tidak likuid, skip.")
+            for key, value in liquidity_details.items():
+                if key != "is_liquid" and "❌" in str(value):
+                    logger.warning(f"  {key}: {value}")
+            continue
+        
+        logger.info(f"[{ticker}] ✅ Likuiditas OK")
+        for key, value in liquidity_details.items():
+            if key != "is_liquid" and "✅" in str(value):
+                logger.info(f"  {key}: {value}")
+
+        # --- DETEKSI BREAKOUT ---
+        result = detect_breakout(ticker, intraday_df, daily_df)
+        all_results.append(result)
+
+        # --- LOG DETAIL ---
+        logger.info(
+            f"[{ticker}] Rp{result['current_price']:,.0f} @ {result['current_time']} | "
+            f"Low: Rp{result['lowest_low']:,.0f} | Trigger: Rp{result['trigger_level']:,.0f} | "
+            f"↑{result['actual_percent_from_low']:.2f}% | "
+            f"Breakout: {result['is_price_breakout']} | Final: {result['is_final_breakout']}"
+        )
+        
+        if "strength_score" in result:
+            score = result["strength_score"]
+            logger.info(f"[{ticker}] Strength Score: {score['score']}/100 - {score['category']}")
+
+        # --- LOG FILTER ---
+        if result["filters_failed"]:
+            logger.info(f"[{ticker}] ❌ Filter Gagal:")
+            for name, detail in result["filters_failed"].items():
+                logger.info(f"  ✗ {name}: {detail}")
+
+        if result["filters_passed"]:
+            logger.info(f"[{ticker}] ✅ Filter Lolos:")
+            for name, detail in result["filters_passed"].items():
+                logger.info(f"  ✓ {name}: {detail}")
+
+        # --- STATE CHECK ---
+        state = load_state(ticker)
+        current_time_str = str(result["current_time"])
+
+        already_alerted = (
+            state.get("last_alert_time") == current_time_str
+            and state.get("last_lowest_low") == result["lowest_low"]
+        )
+
+        # --- SEND NOTIFICATION ---
+        if result["is_final_breakout"] and not already_alerted:
+            message = format_alert_message(result)
+            send_telegram_message(message)
+
+            state["last_alert_time"] = current_time_str
+            state["last_lowest_low"] = result["lowest_low"]
+            save_state(ticker, state)
+            logger.info(f"[{ticker}] ✅ Alert terkirim!")
+            alerts_sent += 1
+        else:
+            if result["is_price_breakout"] and not result["is_final_breakout"]:
+                logger.info(f"[{ticker}] {format_rejected_message(result)}")
+            else:
+                logger.info(f"[{ticker}] ℹ️ Belum breakout atau sudah pernah alert.")
+            save_state(ticker, state)
+        
+        # --- DELAY ANTAR SAHAM (kecuali terakhir) ---
+        if idx < len(TICKERS) - 1 and BATCH_DELAY_SECONDS > 0:
+            import time
+            logger.info(f"⏱️ Delay {BATCH_DELAY_SECONDS}s sebelum saham berikutnya...")
+            time.sleep(BATCH_DELAY_SECONDS)
+
+    # --- SUMMARY ---
+    logger.info("\n" + "=" * 60)
+    logger.info(f"✅ Selesai memproses {len(TICKERS)} saham. Alert terkirim: {alerts_sent}")
+    logger.info("=" * 60)
+    
+    # Kirim summary jika ada lebih dari 1 saham
+    if len(TICKERS) > 1 and alerts_sent > 0:
+        summary_message = format_summary_message(all_results)
+        send_telegram_message(summary_message)
+
+
 def format_rejected_message(result: Dict) -> str:
     """Format pesan untuk breakout yang ditolak."""
-    lines = ["⚠️ *Breakout harga terdeteksi tapi TIDAK lolos filter:*"]
+    lines = ["⚠️ Breakout harga terdeteksi tapi TIDAK lolos filter:"]
     for name, detail in result["filters_failed"].items():
         lines.append(f"  ✗ {name}: {detail}")
     
@@ -841,91 +1017,6 @@ def format_rejected_message(result: Dict) -> str:
         lines.append(f"\n📊 Strength Score: {score}/100")
     
     return "\n".join(lines)
-
-
-# =====================================================================
-# MAIN
-# =====================================================================
-
-def main():
-    logger.info(f"=== Trailing Start Monitor - {TICKER} ===")
-    logger.info(f"Interval: {INTRADAY_INTERVAL} | Lookback: {INTRADAY_LOOKBACK_BARS} bars")
-    
-    # --- AMBIL DATA ---
-    intraday_df = get_intraday_data(TICKER)
-    if intraday_df is None:
-        logger.warning("Data intraday tidak tersedia, keluar.")
-        sys.exit(0)
-
-    daily_df = get_daily_data(TICKER)
-    if daily_df is None:
-        logger.warning("Data harian tidak tersedia, keluar.")
-        sys.exit(0)
-
-    # --- LIQUIDITY CHECK ---
-    is_liquid, liquidity_details = check_liquidity(intraday_df, daily_df)
-    if not is_liquid:
-        logger.warning(f"Saham {TICKER} tidak likuid:")
-        for key, value in liquidity_details.items():
-            if key != "is_liquid":
-                logger.warning(f"  {key}: {value}")
-        sys.exit(0)
-    
-    logger.info("✅ Likuiditas OK")
-    for key, value in liquidity_details.items():
-        if key != "is_liquid" and "✅" in str(value):
-            logger.info(f"  {key}: {value}")
-
-    # --- DETEKSI BREAKOUT ---
-    result = detect_breakout(intraday_df, daily_df)
-
-    # --- LOG DETAIL ---
-    logger.info(
-        f"{TICKER} | Rp{result['current_price']:,.0f} @ {result['current_time']} | "
-        f"Low: Rp{result['lowest_low']:,.0f} | Trigger: Rp{result['trigger_level']:,.0f} | "
-        f"↑{result['actual_percent_from_low']:.2f}% | "
-        f"Breakout: {result['is_price_breakout']} | Final: {result['is_final_breakout']}"
-    )
-    
-    if "strength_score" in result:
-        score = result["strength_score"]
-        logger.info(f"Strength Score: {score['score']}/100 - {score['category']}")
-
-    # --- LOG FILTER ---
-    if result["filters_failed"]:
-        logger.info("❌ Filter Gagal:")
-        for name, detail in result["filters_failed"].items():
-            logger.info(f"  ✗ {name}: {detail}")
-
-    if result["filters_passed"]:
-        logger.info("✅ Filter Lolos:")
-        for name, detail in result["filters_passed"].items():
-            logger.info(f"  ✓ {name}: {detail}")
-
-    # --- STATE CHECK ---
-    state = load_state()
-    current_time_str = str(result["current_time"])
-
-    already_alerted = (
-        state.get("last_alert_time") == current_time_str
-        and state.get("last_lowest_low") == result["lowest_low"]
-    )
-
-    # --- SEND NOTIFICATION ---
-    if result["is_final_breakout"] and not already_alerted:
-        message = format_alert_message(result)
-        send_telegram_message(message)
-
-        state["last_alert_time"] = current_time_str
-        state["last_lowest_low"] = result["lowest_low"]
-        save_state(state)
-        logger.info("✅ Alert terkirim!")
-    else:
-        if result["is_price_breakout"] and not result["is_final_breakout"]:
-            logger.info(format_rejected_message(result))
-        else:
-            logger.info("ℹ️ Belum breakout atau sudah pernah alert.")
-        save_state(state)
 
 
 if __name__ == "__main__":
