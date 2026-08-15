@@ -18,13 +18,11 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: |
-          pip install requests
+        run: pip install requests
 
       - name: Test Telegram Connection
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          CI: true  # Menandakan running di CI
-        run: |
-          python test_telegram.py --ci
+          CI: true
+        run: python test_telegram.py --ci
