@@ -46,13 +46,23 @@ logger = logging.getLogger(__name__)
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# Support multi-ticker
-TICKERS_RAW = os.environ.get("TICKERS", os.environ.get("TICKER", "TINS.JK"))
+# Support multi-ticker - coba berbagai source
+TICKERS_RAW = os.environ.get("TICKERS", "")
+if not TICKERS_RAW:
+    TICKERS_RAW = os.environ.get("TICKER", "")
+if not TICKERS_RAW:
+    # Fallback ke default
+    TICKERS_RAW = "TINS.JK"
+
+# Parse tickers
 TICKERS = [t.strip().upper() for t in TICKERS_RAW.split(",") if t.strip()]
+
+# Hapus duplikat
+TICKERS = list(dict.fromkeys(TICKERS))
 
 INTRADAY_INTERVAL = os.environ.get("INTRADAY_INTERVAL", "15m")
 INTRADAY_LOOKBACK_BARS = int(os.environ.get("INTRADAY_LOOKBACK_BARS", "20"))
-BREAKOUT_PERCENT = float(os.environ.get("BREAKOUT_PERCENT", "3.0"))
+BREAKOUT_PERCENT = float(os.environ.get("BREAKOUT_PERCENT", "5.0"))
 
 # =====================================================================
 # FUNGSI
@@ -252,6 +262,13 @@ def main():
     print("🧪 TEST BREAKOUT SIMULATION - MULTI-TICKER")
     print("=" * 60 + "\n")
     
+    # Log semua environment variables untuk debugging
+    logger.info("📋 Environment Variables:")
+    logger.info(f"   TICKERS: '{os.environ.get('TICKERS', 'NOT SET')}'")
+    logger.info(f"   TICKER: '{os.environ.get('TICKER', 'NOT SET')}'")
+    logger.info(f"   INTRADAY_INTERVAL: '{os.environ.get('INTRADAY_INTERVAL', 'NOT SET')}'")
+    logger.info(f"   BREAKOUT_PERCENT: '{os.environ.get('BREAKOUT_PERCENT', 'NOT SET')}'")
+    
     # Cek Telegram config
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         logger.error("❌ TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID belum diset!")
@@ -262,10 +279,16 @@ def main():
         sys.exit(1)
     
     logger.info("✅ Telegram config ditemukan")
-    logger.info(f"📌 Tickers: {', '.join(TICKERS)}")
+    logger.info(f"📌 Tickers RAW: '{TICKERS_RAW}'")
+    logger.info(f"📌 Tickers parsed: {TICKERS}")
     logger.info(f"📌 Total: {len(TICKERS)} saham")
     logger.info(f"📌 Interval: {INTRADAY_INTERVAL}")
     logger.info(f"📌 Breakout: {BREAKOUT_PERCENT}%\n")
+    
+    # Jika tidak ada ticker, gunakan default
+    if not TICKERS:
+        logger.warning("⚠️ Tidak ada ticker ditemukan, menggunakan default: TINS.JK")
+        TICKERS = ["TINS.JK"]
     
     # Proses setiap ticker
     results = []
@@ -313,7 +336,7 @@ def main():
             logger.info("⏱️ Delay 2s sebelum ticker berikutnya...")
             time.sleep(2)
     
-    # Kirim summary jika lebih dari 1 ticker
+    # Kirim summary jika lebih dari 1 ticker dan ada hasil
     if len(results) > 1:
         logger.info("\n" + "-" * 60)
         logger.info("📤 Mengirim summary...")
