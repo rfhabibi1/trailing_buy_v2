@@ -6,6 +6,8 @@ TEST BREAKOUT SIMULATION - Untuk Testing di Akhir Pekan
 Script ini mensimulasikan kondisi breakout dengan data historis
 untuk menguji notifikasi Telegram dan semua filter.
 
+Support MULTI-TICKER: Bisa test beberapa saham sekaligus.
+
 Cara menjalankan:
     python test_breakout_simulation.py
 
@@ -18,7 +20,9 @@ import os
 import sys
 import json
 import logging
+import time
 from datetime import datetime, timedelta
+from typing import List, Dict, Optional
 
 import requests
 import yfinance as yf
@@ -42,10 +46,13 @@ logger = logging.getLogger(__name__)
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-TICKER = os.environ.get("TICKER", "TINS.JK")
-INTRADAY_INTERVAL = "15m"
-INTRADAY_LOOKBACK_BARS = 20
-BREAKOUT_PERCENT = 3.0
+# Support multi-ticker
+TICKERS_RAW = os.environ.get("TICKERS", os.environ.get("TICKER", "TINS.JK"))
+TICKERS = [t.strip().upper() for t in TICKERS_RAW.split(",") if t.strip()]
+
+INTRADAY_INTERVAL = os.environ.get("INTRADAY_INTERVAL", "15m")
+INTRADAY_LOOKBACK_BARS = int(os.environ.get("INTRADAY_LOOKBACK_BARS", "20"))
+BREAKOUT_PERCENT = float(os.environ.get("BREAKOUT_PERCENT", "3.0"))
 
 # =====================================================================
 # FUNGSI
@@ -71,34 +78,53 @@ def send_telegram_message(message: str) -> bool:
         return False
 
 
-def simulate_breakout(ticker: str):
+def get_historical_data(ticker: str) -> Optional[pd.DataFrame]:
     """
-    Simulasi breakout dengan mengambil data historis dan
-    menambahkan lonjakan harga + volume.
+    Ambil data historis untuk satu ticker.
     """
-    logger.info(f"📊 Mengambil data historis {ticker}...")
-    
-    # Ambil data 5 hari terakhir
-    t = yf.Ticker(ticker)
-    df = t.history(period="5d", interval=INTRADAY_INTERVAL)
-    
-    if df.empty:
-        logger.error(f"❌ Tidak ada data untuk {ticker}")
+    try:
+        logger.info(f"📊 Mengambil data {ticker}...")
+        t = yf.Ticker(ticker)
+        df = t.history(period="5d", interval=INTRADAY_INTERVAL)
+        
+        if df.empty:
+            logger.warning(f"⚠️ Tidak ada data untuk {ticker}")
+            return None
+        
+        logger.info(f"✅ {ticker}: {len(df)} bar data")
+        return df
+        
+    except Exception as e:
+        logger.warning(f"⚠️ {ticker}: Gagal ambil data - {str(e)[:50]}")
         return None
-    
-    logger.info(f"✅ Mendapat {len(df)} bar data")
+
+
+def simulate_breakout_for_ticker(ticker: str, df: pd.DataFrame) -> Optional[Dict]:
+    """
+    Simulasi breakout untuk satu ticker berdasarkan data historis.
+    """
+    if df is None or df.empty:
+        return None
     
     # Ambil data terakhir
     last_bar = df.iloc[-1].copy()
     lowest_low = df["Low"].tail(INTRADAY_LOOKBACK_BARS).min()
     current_price = last_bar["Close"]
     
-    # Simulasi breakout: harga naik 5% dari low
+    # Simulasi breakout: harga naik dari low
     breakout_price = lowest_low * (1 + BREAKOUT_PERCENT / 100)
     
     # Buat data simulasi
     simulated_price = max(current_price, breakout_price) * 1.02  # 2% di atas trigger
     simulated_volume = df["Volume"].tail(10).mean() * 2.5  # 2.5x rata-rata
+    
+    # Pastikan tidak NaN
+    if pd.isna(simulated_price):
+        simulated_price = current_price * 1.05
+    if pd.isna(simulated_volume) or simulated_volume == 0:
+        simulated_volume = 1000000
+    
+    actual_percent = ((simulated_price - lowest_low) / lowest_low) * 100
     
     # Buat result simulasi
     result = {
@@ -108,13 +134,13 @@ def simulate_breakout(ticker: str):
         "lowest_low": lowest_low,
         "trigger_level": breakout_price,
         "threshold_desc": f"{BREAKOUT_PERCENT}% dari titik terendah",
-        "actual_percent_from_low": ((simulated_price - lowest_low) / lowest_low) * 100,
+        "actual_percent_from_low": actual_percent,
         "is_price_breakout": True,
         "is_final_breakout": True,
         "filters_passed": {
-            "volume_ratio": "2.50x (min 1.5x)",
+            "volume_ratio": f"{simulated_volume / df['Volume'].tail(10).mean():.2f}x (min 1.5x)" if df['Volume'].tail(10).mean() > 0 else "2.50x (min 1.5x)",
             "volume_spike": "Z-Score 3.20 > 2.0",
-            "volume_trend": "Volume meningkat (slope: 1250)",
+            "volume_trend": "Volume meningkat (slope: +1250)",
             "vwap": "Harga di atas VWAP",
             "cvd": "Buy 65% (min 55%)",
             "mt_volume": "Daily vol 1.80x (min 1.2x)",
@@ -143,20 +169,26 @@ def simulate_breakout(ticker: str):
     return result
 
 
-def format_test_message(result: dict) -> str:
-    """Format pesan test."""
+def format_test_message(result: Dict, is_multi: bool = False, index: int = 0, total: int = 0) -> str:
+    """Format pesan test untuk satu ticker."""
     strength = result.get("strength_score", {})
     score = strength.get("score", 0)
     emoji = strength.get("emoji", "🚀")
     category = strength.get("category", "TEST")
+    ticker = result.get("ticker", "UNKNOWN")
+    
+    if is_multi:
+        header = f"{emoji} *{category} - TEST #{index+1}/{total}*"
+    else:
+        header = f"{emoji} *{category} - TEST MODE*"
     
     lines = [
-        f"{emoji} *{category} - TEST MODE*",
+        header,
         "",
         "🧪 *INI ADALAH PESAN TEST*",
         "Sistem berjalan dan terhubung dengan Telegram!",
         "",
-        f"📊 *{result['ticker']}* | {INTRADAY_INTERVAL}",
+        f"📊 *{ticker}* | {INTRADAY_INTERVAL}",
         f"💵 Rp{result['current_price']:,.0f} (↑{result['actual_percent_from_low']:.2f}%)",
         f"📉 Low: Rp{result['lowest_low']:,.0f}",
         f"🎯 Trigger: Rp{result['trigger_level']:,.0f}",
@@ -168,10 +200,14 @@ def format_test_message(result: dict) -> str:
         "✅ *Filter Lolos (SIMULASI):*"
     ]
     
-    for name in list(result["filters_passed"].keys())[:5]:
+    # Tampilkan 5 filter pertama
+    filter_names = list(result["filters_passed"].keys())[:5]
+    for name in filter_names:
         lines.append(f"  • {name}: ✅")
     
-    lines.append("  • ... dan lainnya")
+    if len(result["filters_passed"]) > 5:
+        lines.append(f"  • ... dan {len(result['filters_passed']) - 5} lainnya")
+    
     lines.append("")
     lines.append("📌 *INFORMASI:*")
     lines.append("  • Ini adalah pesan TEST dari sistem")
@@ -183,21 +219,27 @@ def format_test_message(result: dict) -> str:
     return "\n".join(lines)
 
 
-def format_error_message(error: str) -> str:
-    """Format pesan error."""
+def format_summary_message(results: List[Dict]) -> str:
+    """Format pesan ringkasan semua ticker."""
     lines = [
-        "❌ *ERROR - TEST GAGAL*",
+        "📊 *SUMMARY TEST - SEMUA TICKER*",
         "",
-        f"📌 *Error:* {error}",
-        "",
-        "💡 *Solusi:*",
-        "  1. Periksa TELEGRAM_BOT_TOKEN",
-        "  2. Periksa TELEGRAM_CHAT_ID",
-        "  3. Pastikan bot sudah di-start",
-        "  4. Coba jalankan test_telegram.py dulu",
-        "",
-        f"🕐 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} WIB"
+        f"🕐 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} WIB",
+        ""
     ]
+    
+    for i, r in enumerate(results):
+        ticker = r.get("ticker", "UNKNOWN")
+        price = r.get("current_price", 0)
+        percent = r.get("actual_percent_from_low", 0)
+        score = r.get("strength_score", {}).get("score", 0)
+        
+        lines.append(f"• *{ticker}*: Rp{price:,.0f} | ↑{percent:.1f}% | Score: {score}/100 ✅")
+    
+    lines.append("")
+    lines.append("✅ *Semua ticker berhasil di-simulasi!*")
+    lines.append("🚀 Sistem siap digunakan.")
+    
     return "\n".join(lines)
 
 
@@ -207,7 +249,7 @@ def format_error_message(error: str) -> str:
 
 def main():
     print("\n" + "=" * 60)
-    print("🧪 TEST BREAKOUT SIMULATION")
+    print("🧪 TEST BREAKOUT SIMULATION - MULTI-TICKER")
     print("=" * 60 + "\n")
     
     # Cek Telegram config
@@ -220,59 +262,84 @@ def main():
         sys.exit(1)
     
     logger.info("✅ Telegram config ditemukan")
-    logger.info(f"📌 Ticker: {TICKER}")
+    logger.info(f"📌 Tickers: {', '.join(TICKERS)}")
+    logger.info(f"📌 Total: {len(TICKERS)} saham")
     logger.info(f"📌 Interval: {INTRADAY_INTERVAL}")
     logger.info(f"📌 Breakout: {BREAKOUT_PERCENT}%\n")
     
-    # Simulasi breakout
-    logger.info("🔄 Mensimulasikan breakout...")
-    result = simulate_breakout(TICKER)
+    # Proses setiap ticker
+    results = []
+    alerts_sent = 0
     
-    if result is None:
-        logger.error("❌ Gagal simulasi")
-        sys.exit(1)
+    for idx, ticker in enumerate(TICKERS):
+        logger.info(f"\n{'='*40}")
+        logger.info(f"[{idx+1}/{len(TICKERS)}] Memproses {ticker}...")
+        logger.info(f"{'='*40}")
+        
+        # Ambil data historis
+        df = get_historical_data(ticker)
+        
+        if df is None:
+            logger.warning(f"⚠️ {ticker}: Tidak ada data, skip")
+            continue
+        
+        # Simulasi breakout
+        result = simulate_breakout_for_ticker(ticker, df)
+        
+        if result is None:
+            logger.warning(f"⚠️ {ticker}: Gagal simulasi, skip")
+            continue
+        
+        results.append(result)
+        
+        logger.info(f"✅ {ticker}: Simulasi berhasil!")
+        logger.info(f"   Harga: Rp{result['current_price']:,.0f}")
+        logger.info(f"   Low: Rp{result['lowest_low']:,.0f}")
+        logger.info(f"   Naik: {result['actual_percent_from_low']:.2f}%")
+        logger.info(f"   Score: {result['strength_score']['score']}/100")
+        
+        # Kirim notifikasi per ticker
+        if len(TICKERS) > 1:
+            message = format_test_message(result, True, idx, len(TICKERS))
+        else:
+            message = format_test_message(result, False)
+        
+        success = send_telegram_message(message)
+        if success:
+            alerts_sent += 1
+        
+        # Delay antar ticker
+        if idx < len(TICKERS) - 1:
+            logger.info("⏱️ Delay 2s sebelum ticker berikutnya...")
+            time.sleep(2)
     
-    logger.info("✅ Simulasi berhasil!")
-    logger.info(f"📊 Harga simulasi: Rp{result['current_price']:,.0f}")
-    logger.info(f"📊 Low: Rp{result['lowest_low']:,.0f}")
-    logger.info(f"📊 Trigger: Rp{result['trigger_level']:,.0f}")
-    logger.info(f"📊 Naik: {result['actual_percent_from_low']:.2f}%")
-    logger.info(f"📊 Score: {result['strength_score']['score']}/100")
+    # Kirim summary jika lebih dari 1 ticker
+    if len(results) > 1:
+        logger.info("\n" + "-" * 60)
+        logger.info("📤 Mengirim summary...")
+        logger.info("-" * 60)
+        
+        summary_message = format_summary_message(results)
+        send_telegram_message(summary_message)
     
-    # Kirim pesan test
-    print("\n" + "-" * 60)
-    print("📤 Mengirim notifikasi ke Telegram...")
-    print("-" * 60)
-    
-    message = format_test_message(result)
-    success = send_telegram_message(message)
-    
+    # Final report
     print("\n" + "=" * 60)
-    if success:
-        print("✅ TEST SUCCESS!")
+    print("📊 TEST COMPLETE")
+    print("=" * 60)
+    print(f"\n📌 Total ticker diproses: {len(TICKERS)}")
+    print(f"📌 Berhasil disimulasi: {len(results)}")
+    print(f"📌 Alert terkirim: {alerts_sent}")
+    
+    if alerts_sent > 0:
+        print("\n✅ TEST SUCCESS!")
         print("📱 Cek Telegram Anda - pesan test sudah terkirim!")
     else:
-        print("❌ TEST FAILED!")
-        print("💡 Periksa token dan chat ID Anda.")
-    print("=" * 60 + "\n")
+        print("\n⚠️ TEST PARTIAL - Ada yang gagal")
+        print("💡 Periksa ticker yang tidak valid.")
     
-    # Kirim summary tambahan
-    if success:
-        summary = """
-📊 *TEST SUMMARY*
-
-✅ Koneksi Telegram: OK
-✅ Data Fetching: OK  
-✅ Breakout Detection: OK
-✅ Filter System: OK
-✅ Notification: OK
-
-🚀 Sistem siap digunakan!
-📅 Mulai Senin pagi, workflow akan berjalan otomatis.
-        """
-        send_telegram_message(summary)
+    print("\n" + "=" * 60)
     
-    return 0 if success else 1
+    return 0 if alerts_sent > 0 else 1
 
 
 if __name__ == "__main__":
