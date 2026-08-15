@@ -50,8 +50,10 @@ desktop.ini
 .coverage
 htmlcov/
 
-# State directory - KEEP state files!
-# NOTE: State files are important for tracking alerts
-# DO NOT ignore them!
+# State directory - JANGAN IGNORE!
+# HAPUS BARIS INI:
+# state/
+
+# Sebaliknya, TAMBAHKAN ini untuk menjaga folder:
 state/
 !.gitkeep
