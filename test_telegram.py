@@ -7,11 +7,15 @@ Script ini digunakan untuk menguji koneksi Telegram sebelum
 menjalankan monitor utama. Pastikan TELEGRAM_BOT_TOKEN dan 
 TELEGRAM_CHAT_ID sudah diset dengan benar.
 
-Cara menjalankan:
+CARA MENJALANKAN:
+    # Local (interactive):
     python test_telegram.py
 
-Atau dengan environment variables:
+    # Local (with env):
     TELEGRAM_BOT_TOKEN=xxx TELEGRAM_CHAT_ID=yyy python test_telegram.py
+
+    # GitHub Actions (non-interactive):
+    python test_telegram.py --ci
 =====================================================================
 """
 
@@ -36,7 +40,10 @@ logger = logging.getLogger(__name__)
 # CONFIG
 # =====================================================================
 
-# Bisa dari environment variables atau input manual
+# Cek apakah running di CI (GitHub Actions)
+IS_CI = os.environ.get("CI", "false").lower() == "true" or "--ci" in sys.argv
+
+# Environment variables
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
@@ -71,30 +78,60 @@ def save_config(bot_token: str, chat_id: str):
 
 
 def get_user_input():
-    """Minta input dari user jika environment variables kosong."""
+    """
+    Minta input dari user jika environment variables kosong.
+    Hanya berjalan di mode interactive (bukan CI).
+    """
     global TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
     
+    # Jika di CI, langsung pakai env vars
+    if IS_CI:
+        logger.info("🔧 Running in CI mode (non-interactive)")
+        if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+            logger.error("❌ TELEGRAM_BOT_TOKEN dan TELEGRAM_CHAT_ID harus diset di environment!")
+            logger.info("\n💡 Di GitHub Actions, set Secrets:")
+            logger.info("   - TELEGRAM_BOT_TOKEN")
+            logger.info("   - TELEGRAM_CHAT_ID")
+            sys.exit(1)
+        return
+    
+    # Mode interactive (local)
     # Coba load dari file dulu
     saved_token, saved_chat_id = load_config()
     if saved_token and saved_chat_id:
         logger.info("📁 Found saved config in telegram_config.json")
-        use_saved = input("Use saved config? (y/n): ").strip().lower()
-        if use_saved == "y":
-            TELEGRAM_BOT_TOKEN = saved_token
-            TELEGRAM_CHAT_ID = saved_chat_id
-            return
+        try:
+            use_saved = input("Use saved config? (y/n): ").strip().lower()
+            if use_saved == "y":
+                TELEGRAM_BOT_TOKEN = saved_token
+                TELEGRAM_CHAT_ID = saved_chat_id
+                return
+        except (EOFError, KeyboardInterrupt):
+            # Fallback ke manual jika tidak bisa baca input
+            pass
     
     if not TELEGRAM_BOT_TOKEN:
-        TELEGRAM_BOT_TOKEN = input("Enter your TELEGRAM_BOT_TOKEN: ").strip()
+        try:
+            TELEGRAM_BOT_TOKEN = input("Enter your TELEGRAM_BOT_TOKEN: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            logger.error("❌ Input tidak tersedia. Gunakan environment variables.")
+            sys.exit(1)
     
     if not TELEGRAM_CHAT_ID:
-        TELEGRAM_CHAT_ID = input("Enter your TELEGRAM_CHAT_ID: ").strip()
+        try:
+            TELEGRAM_CHAT_ID = input("Enter your TELEGRAM_CHAT_ID: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            logger.error("❌ Input tidak tersedia. Gunakan environment variables.")
+            sys.exit(1)
     
     # Tanya apakah mau simpan
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-        save_choice = input("Save config for future use? (y/n): ").strip().lower()
-        if save_choice == "y":
-            save_config(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
+        try:
+            save_choice = input("Save config for future use? (y/n): ").strip().lower()
+            if save_choice == "y":
+                save_config(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
+        except (EOFError, KeyboardInterrupt):
+            pass
 
 
 def test_bot_info(bot_token: str) -> dict:
@@ -206,21 +243,6 @@ def test_get_updates(bot_token: str, chat_id: str) -> dict:
         return {"success": False, "error": str(e)}
 
 
-def test_delete_webhook(bot_token: str) -> dict:
-    """
-    Test delete webhook (optional).
-    """
-    url = f"https://api.telegram.org/bot{bot_token}/deleteWebhook"
-    
-    try:
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        return {"success": data.get("ok", False), "result": data.get("result", False)}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-
 # =====================================================================
 # MAIN
 # =====================================================================
@@ -238,12 +260,17 @@ def main():
         logger.info("\n💡 Cara mendapatkan:")
         logger.info("   1. Token: Chat dengan @BotFather di Telegram → /newbot")
         logger.info("   2. Chat ID: Chat dengan @userinfobot → /start")
+        if IS_CI:
+            logger.info("\n💡 Untuk GitHub Actions, set Secrets:")
+            logger.info("   - TELEGRAM_BOT_TOKEN")
+            logger.info("   - TELEGRAM_CHAT_ID")
         sys.exit(1)
     
     # Mask token untuk log
     masked_token = TELEGRAM_BOT_TOKEN[:10] + "..." + TELEGRAM_BOT_TOKEN[-5:] if len(TELEGRAM_BOT_TOKEN) > 15 else "***"
     logger.info(f"📌 Bot Token: {masked_token}")
     logger.info(f"📌 Chat ID: {TELEGRAM_CHAT_ID}")
+    logger.info(f"📌 Mode: {'CI (GitHub Actions)' if IS_CI else 'Local'}")
     
     print("\n" + "-" * 60)
     print("🧪 TEST 1: Cek Informasi Bot (getMe)")
@@ -274,6 +301,7 @@ def main():
 🕐 *Test Time:* {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} WIB
 📱 *Bot:* @{bot_info.get('username', 'unknown')}
 📌 *Chat ID:* {TELEGRAM_CHAT_ID}
+🔄 *Mode:* {'CI (GitHub Actions)' if IS_CI else 'Local'}
 
 💡 *Selanjutnya:*
 - Silakan jalankan monitor utama dengan `python trailing_start_check_once.py`
@@ -300,6 +328,10 @@ def main():
         logger.info("   2. Klik START")
         logger.info("   3. Kirim pesan apapun ke bot (contoh: 'hello')")
         logger.info("   4. Jalankan test ini lagi")
+        if IS_CI:
+            logger.info("\n💡 Di GitHub Actions:")
+            logger.info("   - Pastikan Secrets TELEGRAM_BOT_TOKEN dan TELEGRAM_CHAT_ID sudah benar")
+            logger.info("   - Chat ID harus numeric, bukan username")
         sys.exit(1)
     
     print("\n" + "-" * 60)
@@ -321,7 +353,7 @@ def main():
                 logger.warning(f"   ⚠️ Chat ID mismatch! Update shows: {update_result['chat_id_from_update']}")
         else:
             logger.info("ℹ️ No recent updates. This is normal if bot is new.")
-            logger.info("   Send a message to @{} first to test.".format(bot_info.get('username', 'your_bot')))
+            logger.info(f"   Send a message to @{bot_info.get('username', 'your_bot')} first to test.")
     else:
         logger.warning(f"⚠️ Could not get updates: {update_result.get('error')}")
     
